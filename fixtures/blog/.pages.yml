@@ -1,0 +1,31 @@
+media:
+  input: src/content/media
+  output: /images
+
+content:
+  - name: blog
+    label: Blog
+    type: collection
+    path: src/content/blog
+    view:
+      fields:
+        - title
+        - pubDate
+      sort: pubDate
+      order: desc
+    fields:
+      - name: title
+        label: Title
+        type: string
+      - name: pubDate
+        label: Publish date
+        type: date
+      - name: heroImage
+        label: Hero image
+        type: image
+      - name: description
+        label: Description
+        type: text
+      - name: body
+        label: Body
+        type: rich-text

@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# el fixture se convierte en repo git on demand (fixtures/blog/README.md)
+fixtures/blog/.git/
