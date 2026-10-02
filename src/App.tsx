@@ -99,8 +99,7 @@ export default function App() {
     try {
       const files = await openFolderDialog({
         multiple: true,
-        title: "Choose images",
-        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"] }],
+        title: "Choose files",
       });
       if (!Array.isArray(files) || files.length === 0) return null;
       let last: MediaRef | null = null;
@@ -115,6 +114,20 @@ export default function App() {
       return null;
     }
   }, [loadMedia]);
+
+  const deleteMedia = useCallback(
+    async (m: MediaRef) => {
+      try {
+        await api.deleteMedia(m.path);
+        await loadMedia();
+        refreshStatus();
+        setMessage(`Deleted ${m.path} — commit to apply`);
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [loadMedia, refreshStatus],
+  );
 
   const selectCollection = useCallback(
     (c: ContentItem) => {
@@ -485,6 +498,7 @@ export default function App() {
             items={mediaItems}
             hasMediaInput={Boolean(config?.media.input)}
             onUpload={() => void uploadMedia()}
+            onDelete={(m) => void deleteMedia(m)}
           />
         ) : view.kind === "entry" ? (
           <EntryEditor
@@ -514,6 +528,30 @@ export default function App() {
             onSave={() => void save()}
             onCommit={() => setCommitOpen(true)}
             onPush={() => void push()}
+            onRename={async (newName) => {
+              const v = viewRef.current;
+              if (v.kind !== "entry") return;
+              try {
+                const newPath = await api.renameEntry(v.draft.path, newName);
+                refreshStatus();
+                setMessage(`Renamed to ${newName} — commit to apply`);
+                await openEntry(v.collection, newPath);
+              } catch (e) {
+                setMessage(String(e));
+              }
+            }}
+            onDelete={async () => {
+              const v = viewRef.current;
+              if (v.kind !== "entry") return;
+              try {
+                await api.deleteEntry(v.draft.path);
+                refreshStatus();
+                setMessage(`Deleted ${v.draft.path} — commit to apply`);
+                selectCollection(v.collection);
+              } catch (e) {
+                setMessage(String(e));
+              }
+            }}
             showBack={view.collection.kind === "collection"}
             root={summary.root}
             mediaInput={config?.media.input ?? null}

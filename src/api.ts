@@ -29,6 +29,9 @@ export const api = {
   ) => invoke<string>("write_entry", { path, frontmatter, body }),
   createEntry: (collection: string, slug: string) =>
     invoke<NewEntry>("create_entry", { collection, slug }),
+  renameEntry: (path: string, newName: string) =>
+    invoke<string>("rename_entry", { path, newName }),
+  deleteEntry: (path: string) => invoke<void>("delete_entry", { path }),
   writeFileEntry: (
     path: string,
     frontmatter: Record<string, unknown>,
@@ -38,6 +41,7 @@ export const api = {
   push: () => invoke<void>("push"),
   listMedia: () => invoke<MediaRef[]>("list_media"),
   importMedia: (src: string) => invoke<MediaRef>("import_media", { src }),
+  deleteMedia: (path: string) => invoke<void>("delete_media", { path }),
   fileHistory: (path: string) =>
     invoke<import("./types").CommitInfo[]>("file_history", { path }),
 };

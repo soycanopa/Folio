@@ -82,22 +82,33 @@ export function Sidebar({
         <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
           Content
         </p>
-        {collections.map((c) => (
-          <button
-            key={c.name}
-            onClick={() => onSelect(c)}
-            className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
-              selected === c.name ? "bg-raised" : "hover:bg-raised/40"
-            }`}
-          >
-            {c.kind === "file" ? (
-              <FileJson size={15} className="shrink-0 text-ink-dim" />
-            ) : (
-              <FileText size={15} className="shrink-0 text-ink-dim" />
-            )}
-            <span className="truncate">{c.label}</span>
-          </button>
-        ))}
+        {collections.map((c, i) => {
+          const prev = i > 0 ? collections[i - 1] : null;
+          const showGroupLabel =
+            c.group != null && c.group !== (prev?.group ?? null);
+          return (
+            <div key={c.name}>
+              {showGroupLabel && (
+                <p className="px-2 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
+                  {c.group}
+                </p>
+              )}
+              <button
+                onClick={() => onSelect(c)}
+                className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
+                  selected === c.name ? "bg-raised" : "hover:bg-raised/40"
+                }`}
+              >
+                {c.kind === "file" ? (
+                  <FileJson size={15} className="shrink-0 text-ink-dim" />
+                ) : (
+                  <FileText size={15} className="shrink-0 text-ink-dim" />
+                )}
+                <span className="truncate">{c.label}</span>
+              </button>
+            </div>
+          );
+        })}
 
         {onCanvas && (
           <button
