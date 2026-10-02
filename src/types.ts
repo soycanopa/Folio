@@ -73,6 +73,13 @@ export interface PagesConfig {
   settings: { commit_templates: CommitTemplates };
 }
 
+/** Resultado de write_config: el path escrito y la config que quedó
+ * viva en el estado (el sidebar se re-arma con ella). */
+export interface ConfigSave {
+  path: string;
+  config: PagesConfig;
+}
+
 export interface RepoSummary {
   root: string;
   branch: string;
