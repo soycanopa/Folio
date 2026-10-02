@@ -287,18 +287,27 @@ fn parse_fields(
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let help = get_str(m, "help");
-        let values = m
-            .get("options")
-            .and_then(Value::as_mapping)
-            .and_then(|o| o.get("values"))
-            .and_then(Value::as_sequence)
-            .map(|s| {
-                s.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Su schema admite `options: [a, b]` y `options: {values: [a, b]}`.
+        let values = match m.get("options") {
+            Some(Value::Sequence(seq)) => seq
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+            Some(Value::Mapping(_)) => m
+                .get("options")
+                .and_then(Value::as_mapping)
+                .and_then(|o| o.get("values"))
+                .and_then(Value::as_sequence)
+                .map(|s| {
+                    s.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         out.push(Field {
             name,
             label,
@@ -632,6 +641,16 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("media.extensions")));
+    }
+
+    #[test]
+    fn select_con_options_de_lista_plana() {
+        // El portfolio real usa `options: [reading, read, pending]`.
+        let cfg = parse_config("content:\n  - name: b\n    path: x\n    fields:\n      - name: status\n        type: select\n        options: [reading, read, pending]\n").unwrap();
+        assert_eq!(
+            cfg.content[0].fields[0].values,
+            vec!["reading".to_string(), "read".to_string(), "pending".to_string()]
+        );
     }
 
     #[test]
