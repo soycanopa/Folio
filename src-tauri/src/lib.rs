@@ -20,6 +20,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            // Recuerda tamaño/posición de la ventana entre corridas
+            // (plugin oficial; Rust-side, sin bindings JS).
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_window_state::Builder::default().build())
+                .map_err(|e| format!("window-state: {e}"))?;
+            Ok(())
+        })
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             repo::open_repo,
