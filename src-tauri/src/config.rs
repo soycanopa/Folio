@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_yaml_ng::{Mapping, Value};
+use std::fs;
 
 use crate::state::AppState;
 
@@ -471,6 +472,137 @@ pub fn read_config(state: tauri::State<'_, AppState>) -> Result<PagesConfig, Str
     }
 }
 
+// ---- editor Configuration (su página /configuration) ----
+// Solo edita el `.pages.yml` existente: crear configuración quedó fuera
+// de alcance (decisión del dueño, 2026-10-02), igual que en la web, donde
+// un repo sin config no entra a esta página.
+
+/// Resultado de guardar: el path escrito y la config re-parseada que
+/// queda viva en el estado (el sidebar se re-arma con ella).
+#[derive(Serialize, Debug)]
+pub struct ConfigSave {
+    pub path: String,
+    pub config: PagesConfig,
+}
+
+/// YAML parseable, nada más: el lint que su Entry corre sobre `.pages.yml`
+/// (`parseAndValidateConfig`); la UI lo muestra debajo del editor.
+#[tauri::command]
+pub fn validate_config(raw: String) -> Result<(), String> {
+    parse_config(&raw).map(|_| ())
+}
+
+fn write_config_local(st: &mut crate::state::RepoState, raw: &str) -> Result<ConfigSave, String> {
+    // Revalida aquí: un config roto no entra a disco aunque un caller
+    // se salte el chequeo del comando.
+    let cfg = parse_config(raw)?;
+    crate::entry::ensure_writable(st, ".pages.yml")?;
+    let full = crate::entry::safe_join(&st.root, ".pages.yml")?;
+    fs::write(&full, raw.as_bytes()).map_err(|e| format!("escribir .pages.yml: {e}"))?;
+    crate::entry::track(st, ".pages.yml");
+    st.config = Some(cfg.clone());
+    Ok(ConfigSave {
+        path: ".pages.yml".to_string(),
+        config: cfg,
+    })
+}
+
+/// Texto crudo del `.pages.yml` (local: disco; remoto: Contents API con
+/// caché de sesión para el sha del PUT).
+#[tauri::command]
+pub async fn read_config_raw(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let ctx = {
+        let guard = state.lock().unwrap();
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            crate::state::Project::Local(st) => {
+                st.config
+                    .as_ref()
+                    .ok_or_else(|| "sin .pages.yml en la raíz del repo".to_string())?;
+                let full = crate::entry::safe_join(&st.root, ".pages.yml")?;
+                return fs::read_to_string(&full).map_err(|e| format!("leer .pages.yml: {e}"));
+            }
+            crate::state::Project::Remote(rs) => {
+                rs.config
+                    .as_ref()
+                    .ok_or_else(|| "el repo remoto no tiene .pages.yml".to_string())?;
+                if let Some(f) = rs.files.get(".pages.yml") {
+                    return Ok(f.text.clone());
+                }
+                crate::remote::remote_ctx(rs)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let (t, c) = (token.clone(), ctx.clone());
+    let (text, sha) = tauri::async_runtime::spawn_blocking(move || {
+        crate::remote::fetch_text(&t, &c, ".pages.yml")
+    })
+    .await
+    .map_err(|e| format!("leer .pages.yml: {e}"))??;
+    let mut guard = state.lock().unwrap();
+    if let Some(crate::state::Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.files.insert(
+                ".pages.yml".to_string(),
+                crate::state::RemoteFile { sha, text: text.clone() },
+            );
+        }
+    }
+    Ok(text)
+}
+
+/// Guarda el `.pages.yml`. El YAML se valida ANTES de escribir (un config
+/// roto no entra a disco, como el lint de su Entry) y al éxito el estado
+/// recarga la config para que el sidebar refleje los cambios.
+#[tauri::command]
+pub async fn write_config(state: tauri::State<'_, AppState>, raw: String) -> Result<ConfigSave, String> {
+    let cfg = parse_config(&raw)?;
+    let (ctx, sha) = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            crate::state::Project::Local(st) => return write_config_local(st, &raw),
+            crate::state::Project::Remote(rs) => (
+                crate::remote::remote_ctx(rs),
+                rs.files.get(".pages.yml").map(|f| f.sha.clone()),
+            ),
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let login = crate::remote::current_session()?.login;
+    let (t, c, cfg2, text) = (token.clone(), ctx.clone(), Some(cfg.clone()), raw.clone());
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        // Sin sha cacheado (el .pages.yml no pasa por read_entry): GET
+        // primero — con 404 se rechaza porque Folio no crea configuración.
+        let sha = match sha {
+            Some(s) => Some(s),
+            None => Some(match crate::gh_api::get_content(&t, &c.owner, &c.repo, ".pages.yml", &c.branch) {
+                Ok(f) => f.sha,
+                Err(e) if e.status == 404 => {
+                    return Err("el repo remoto no tiene .pages.yml; Folio no crea configuración".to_string())
+                }
+                Err(e) => return Err(crate::remote::gh_error_ui(e)),
+            }),
+        };
+        crate::remote::put_text_file(&t, &c, cfg2.as_ref(), None, &login, ".pages.yml", &text, sha.as_deref())
+    })
+    .await
+    .map_err(|e| format!("guardar configuración: {e}"))??;
+    let mut guard = state.lock().unwrap();
+    if let Some(crate::state::Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.files.insert(
+                ".pages.yml".to_string(),
+                crate::state::RemoteFile { sha: outcome.sha, text: raw },
+            );
+            rs.config = Some(cfg.clone());
+        }
+    }
+    Ok(ConfigSave {
+        path: outcome.path,
+        config: cfg,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,5 +792,55 @@ mod tests {
         assert_eq!(ext_of("sinext"), "");
         assert_eq!(ext_of(".gitkeep"), "");
         assert_eq!(ext_of(".config.json"), "json");
+    }
+
+    // ---- editor Configuration ----
+
+    fn st_local(dir: &std::path::Path, yaml: &str) -> crate::state::RepoState {
+        let repo = git2::Repository::init(dir).unwrap();
+        crate::state::RepoState {
+            repo,
+            root: dir.to_path_buf(),
+            config: Some(parse_config(yaml).unwrap()),
+            touched: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn write_config_local_escribe_trackea_y_recarga() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = st_local(dir.path(), FIXTURE_YAML);
+        let nuevo = "media:\n  input: otro\ncontent:\n  - name: pages\n    label: Pages\n    path: content\n    fields:\n      - name: title\n        type: string\n";
+        let save = write_config_local(&mut st, nuevo).unwrap();
+        assert_eq!(save.path, ".pages.yml");
+        assert_eq!(st.touched, vec![std::path::PathBuf::from(".pages.yml")]);
+        // El estado quedó con la config nueva (el sidebar se re-arma).
+        assert_eq!(st.config.as_ref().unwrap().content[0].name, "pages");
+        // Y el disco tiene el texto exacto.
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".pages.yml")).unwrap(),
+            nuevo
+        );
+    }
+
+    #[test]
+    fn write_config_con_yaml_roto_no_toca_disco() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = st_local(dir.path(), FIXTURE_YAML);
+        fs::write(dir.path().join(".pages.yml"), FIXTURE_YAML).unwrap();
+        let antes = fs::read_to_string(dir.path().join(".pages.yml")).unwrap();
+        let err = write_config_local(&mut st, "content: [").unwrap_err();
+        assert!(err.contains(".pages.yml inválido"), "{err}");
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".pages.yml")).unwrap(),
+            antes
+        );
+        assert!(st.touched.is_empty());
+    }
+
+    #[test]
+    fn validate_config_refleja_al_parser() {
+        assert!(validate_config("content: []\n".to_string()).is_ok());
+        assert!(validate_config("content: [".to_string()).is_err());
     }
 }
