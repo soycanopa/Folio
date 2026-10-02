@@ -37,6 +37,8 @@ interface CanvasProps {
   dirty: boolean;
   /** Remoto: las previews se resuelven contra la API, no el disco. */
   remote?: boolean;
+  /** Save en curso: el botón se bloquea (su isBusy). */
+  busy?: boolean;
   onChange: (l: CanvasLayout) => void;
   onOpenEntry: (path: string) => void;
   onSave: () => void;
@@ -58,6 +60,7 @@ export function Canvas({
   layout,
   dirty,
   remote,
+  busy,
   onChange,
   onOpenEntry,
   onSave,
@@ -288,7 +291,7 @@ export function Canvas({
           </div>
           <button
             onClick={onSave}
-            disabled={!dirty}
+            disabled={!dirty || busy}
             className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
           >
             Save

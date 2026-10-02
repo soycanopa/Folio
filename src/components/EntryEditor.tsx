@@ -36,6 +36,10 @@ interface EntryEditorProps {
   showBack: boolean;
   /** Modo remoto: los textos reflejan que todo se publica al guardar. */
   remote?: boolean;
+  /** Save en curso: el botón se bloquea (su isBusy). */
+  busy?: boolean;
+  /** Link "See all changes" del historial (github.com/{o}/{r}/commits/…). */
+  seeAllChangesUrl?: string;
   root: string;
   mediaInput?: string | null;
   mediaItems: MediaRef[];
@@ -57,6 +61,8 @@ export function EntryEditor({
   dirty,
   showBack,
   remote,
+  busy,
+  seeAllChangesUrl,
   root,
   mediaInput,
   mediaItems,
@@ -168,7 +174,9 @@ export function EntryEditor({
                   onClick={() => setHistoryOpen(false)}
                 />
                 <div className="absolute right-0 z-20 mt-1 max-h-96 w-80 overflow-y-auto rounded-lg border border-line bg-panel py-2 shadow-2xl">
-                  {(history ?? []).map((c) => (
+                  {/* Su entry-history: los 3 últimos commits, cada uno
+                      link a GitHub, y "See all changes" si hay más. */}
+                  {(history ?? []).slice(0, 3).map((c) => (
                     <div
                       key={c.oid}
                       className="flex items-start gap-2.5 px-3 py-2"
@@ -203,6 +211,16 @@ export function EntryEditor({
                       )}
                     </div>
                   ))}
+                  {history != null && history.length > 3 && seeAllChangesUrl && (
+                    <a
+                      href={seeAllChangesUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block border-t border-line px-3 py-2 text-sm hover:bg-raised"
+                    >
+                      See all changes
+                    </a>
+                  )}
                   {history != null && history.length === 0 && (
                     <p className="px-3 py-3 text-sm text-ink-dim">
                       No commits for this file yet.
@@ -230,7 +248,7 @@ export function EntryEditor({
           </div>
           <button
             onClick={onSave}
-            disabled={!dirty}
+            disabled={!dirty || busy}
             className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
           >
             Save

@@ -110,6 +110,17 @@ export default function App() {
     api.repoStatus().then(setStatus).catch((e) => setMessage(String(e)));
   }, []);
 
+  // El core invalida la sesión en un 401 (remote::gh_error_ui, como su
+  // GithubAuthExpired) y sus errores de sesión llevan el texto
+  // "sesión de GitHub": al verlo, el home deja de creer que hay sesión.
+  const report = useCallback((e: unknown) => {
+    const msg = String(e);
+    setMessage(msg);
+    if (msg.includes("sesión de GitHub")) {
+      api.githubSession().then(setGhSession).catch(() => undefined);
+    }
+  }, []);
+
   const loadRows = useCallback(async (c: ContentItem) => {
     try {
       const list = await api.listEntries(c.path);
@@ -121,7 +132,7 @@ export default function App() {
       );
       setRows(contents);
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -159,7 +170,7 @@ export default function App() {
       if (!remote) setMessage(`Imported ${files.length} file(s)`);
       return last;
     } catch (e) {
-      setMessage(String(e));
+      report(e);
       return null;
     }
   }, [loadMedia]);
@@ -175,7 +186,7 @@ export default function App() {
           remote ? `Deleted ${m.path}` : `Deleted ${m.path} — commit to apply`,
         );
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [loadMedia, refreshStatus],
@@ -209,7 +220,7 @@ export default function App() {
         },
       });
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -264,7 +275,7 @@ export default function App() {
       setCanvasSnapshot(JSON.stringify(full));
       setView({ kind: "canvas", collection: c });
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -287,7 +298,7 @@ export default function App() {
         void loadMedia();
         if (cfg.content.length > 0) selectCollection(cfg.content[0]);
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [refreshStatus, selectCollection],
@@ -333,7 +344,7 @@ export default function App() {
           },
         });
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [],
@@ -363,7 +374,7 @@ export default function App() {
           draft: { path: res.path, isNew: true, fm, body: "", snapshot: "" },
         });
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [openEntry],
@@ -376,17 +387,26 @@ export default function App() {
     canvasLayout !== null &&
     JSON.stringify(canvasLayout) !== canvasSnapshot;
   const dirty = entryDirty || canvasDirty;
+  // Como su isBusy: mientras publica no se dispara otro save (un doble
+  // Cmd+S en remoto publicaría dos commits).
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const save = useCallback(async () => {
-    const v = viewRef.current;
-    const remote = summaryRef.current?.mode === "remote";
-    if (v.kind === "canvas") {
-      const persist = api.writeFileEntry(
-        canvasPath,
-        canvasLayout as unknown as Record<string, unknown>,
-        "",
-      );
-      try {
+    // Como su isBusy: mientras publica no se dispara otro save (un doble
+    // Cmd+S en remoto publicaría dos commits).
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const v = viewRef.current;
+      const remote = summaryRef.current?.mode === "remote";
+      if (v.kind === "canvas") {
+        const persist = api.writeFileEntry(
+          canvasPath,
+          canvasLayout as unknown as Record<string, unknown>,
+          "",
+        );
         // Remoto: Save publica directo en la rama (decisión del dueño);
         // toast como su entry.tsx ("Saving your file" → mensaje del save).
         const path = remote
@@ -400,17 +420,13 @@ export default function App() {
         if (path !== canvasPath) setCanvasPath(path);
         if (!remote) refreshStatus();
         else setMessage("");
-      } catch (e) {
-        setMessage(String(e));
+        return;
       }
-      return;
-    }
-    if (v.kind !== "entry") return;
-    const persist =
-      v.collection.kind === "file"
-        ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
-        : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
-    try {
+      if (v.kind !== "entry") return;
+      const persist =
+        v.collection.kind === "file"
+          ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
+          : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
       const path = remote
         ? await toastPromise(persist, {
             loading: "Saving your file",
@@ -433,7 +449,10 @@ export default function App() {
         setMessage(`Saved ${path}`);
       }
     } catch (e) {
-      setMessage(String(e));
+      report(e);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }, [canvasLayout, canvasPath, loadRows, refreshStatus]);
 
@@ -460,7 +479,7 @@ export default function App() {
       await api.githubLogout();
       setGhSession(null);
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -484,7 +503,7 @@ export default function App() {
         void loadMedia();
         if (cfg.content.length > 0) selectCollection(cfg.content[0]);
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [loadMedia, selectCollection],
@@ -525,7 +544,7 @@ export default function App() {
         trackVisit(visit.owner, visit.repo, visit.branch, "local");
         await openRepoFlow(target);
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [openRepoFlow],
@@ -580,7 +599,7 @@ export default function App() {
       refreshStatus();
       setMessage("Pushed");
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, [refreshStatus]);
 
@@ -695,6 +714,7 @@ export default function App() {
             collection={view.collection}
             root={summary.root}
             remote={summary.mode === "remote"}
+            busy={saving}
             mediaInput={config?.media.input ?? null}
             cards={canvasRows}
             layout={canvasLayout ?? DEFAULT_LAYOUT}
@@ -723,6 +743,17 @@ export default function App() {
             draft={view.draft}
             dirty={dirty}
             remote={summary.mode === "remote"}
+            busy={saving}
+            seeAllChangesUrl={
+              summary.owner_repo
+                ? `https://github.com/${summary.owner_repo}/commits/${encodeURIComponent(
+                    summary.branch,
+                  )}/${view.draft.path
+                    .split("/")
+                    .map(encodeURIComponent)
+                    .join("/")}`
+                : undefined
+            }
             onFmChange={(name, value) =>
               setView((v) =>
                 v.kind === "entry"
@@ -759,7 +790,7 @@ export default function App() {
                 );
                 await openEntry(v.collection, newPath);
               } catch (e) {
-                setMessage(String(e));
+                report(e);
               }
             }}
             onDelete={async () => {
@@ -775,7 +806,7 @@ export default function App() {
                 );
                 selectCollection(v.collection);
               } catch (e) {
-                setMessage(String(e));
+                report(e);
               }
             }}
             showBack={view.collection.kind === "collection"}
@@ -847,7 +878,7 @@ export default function App() {
               refreshStatus();
               setMessage(`Commit ${oid.slice(0, 8)}`);
             } catch (e) {
-              setMessage(String(e));
+              report(e);
             }
           }}
         />
@@ -880,7 +911,7 @@ export default function App() {
               await api.cloneRepo(url, dest);
               await openRepoFlow(dest);
             } catch (e) {
-              setMessage(String(e));
+              report(e);
             }
           }}
         />

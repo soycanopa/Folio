@@ -79,21 +79,59 @@ pub fn read_entry_at(root: &Path, path: &str) -> Result<EntryContent, String> {
 // Invariante Folio: un write de contenido tiene que resolver dentro de
 // `content[].path` o `media.input` del `.pages.yml` (AGENTS.md). Sin
 // config parseada no hay contra qué validar, así que se rechaza.
+// Además valida el esquema como su server (`files/[path]/route.ts`):
+// extensión del ítem, `subfolders: false` y `media.extensions`.
 pub(crate) fn ensure_writable_config(cfg: &crate::config::PagesConfig, rel: &str) -> Result<(), String> {
-    let rel_path = Path::new(rel);
-    let in_collection = cfg
-        .content
-        .iter()
-        .any(|c| rel_path.starts_with(Path::new(&c.path)));
+    if let Some(item) = owning_item(cfg, rel) {
+        validate_content_target(item, rel)?;
+        return Ok(());
+    }
     let in_media = cfg
         .media
         .input
         .as_deref()
-        .is_some_and(|m| rel_path.starts_with(Path::new(m)));
-    if !(in_collection || in_media) {
-        return Err(format!("write fuera de las rutas del config: {rel}"));
+        .is_some_and(|m| Path::new(rel).starts_with(Path::new(m)));
+    if in_media {
+        let ext = crate::config::ext_of(rel);
+        if !cfg.media.extensions.is_empty() && !cfg.media.extensions.contains(&ext) {
+            return Err(format!("Invalid extension \"{ext}\" for media."));
+        }
+        return Ok(());
+    }
+    Err(format!("write fuera de las rutas del config: {rel}"))
+}
+
+/// Las validaciones de contenido de su `files/[path]/route.ts`.
+fn validate_content_target(item: &crate::config::ContentItem, rel: &str) -> Result<(), String> {
+    // El layout.json del canvas (v2) vive junto a la colección por
+    // diseño (TRD); la web no tiene canvas y su validación de extensión
+    // no lo contempla, así que queda exento explícito.
+    let is_canvas_layout = item.kind == "collection"
+        && rel == format!("{}/layout.json", item.path.trim_end_matches('/'));
+    let ext = crate::config::ext_of(rel);
+    if !is_canvas_layout && ext != item.extension {
+        return Err(format!(
+            "Invalid extension \"{ext}\" for content \"{}\".",
+            item.name
+        ));
+    }
+    if item.kind == "collection"
+        && item.subfolders == Some(false)
+        && parent_of(rel) != item.path.trim_end_matches('/')
+    {
+        return Err(format!(
+            "Subfolders are not allowed for collection \"{}\".",
+            item.name
+        ));
     }
     Ok(())
+}
+
+fn parent_of(rel: &str) -> String {
+    match rel.rfind('/') {
+        Some(i) => rel[..i].to_string(),
+        None => String::new(),
+    }
 }
 
 pub(crate) fn ensure_writable(st: &RepoState, rel: &str) -> Result<(), String> {
@@ -253,6 +291,10 @@ fn track(st: &mut RepoState, path: &str) {
 pub fn rename_entry_impl(st: &mut RepoState, path: &str, new_name: &str) -> Result<String, String> {
     ensure_writable(st, path)?;
     let item = owning_collection(st, path)?;
+    // Su rename route: renombrar un `type: file` no está permitido.
+    if item.kind == "file" {
+        return Err("Renaming content of type \"file\" isn't allowed.".to_string());
+    }
     if !item.operations.rename {
         return Err(format!("la colección {} no permite renombrar", item.name));
     }
@@ -337,6 +379,12 @@ pub async fn rename_entry(
                     owning_item(&cfg, &path).cloned().ok_or(format!(
                         "write fuera de las rutas del config: {path}"
                     ))?;
+                // Su rename route: renombrar un `type: file` no está permitido.
+                if item.kind == "file" {
+                    return Err(
+                        "Renaming content of type \"file\" isn't allowed.".to_string(),
+                    );
+                }
                 if !item.operations.rename {
                     return Err(format!("la colección {} no permite renombrar", item.name));
                 }
@@ -686,6 +734,73 @@ mod tests {
         assert!(write_entry_tracked(&mut st, "src/other/a.md", fm.clone(), "x").is_err());
         // Media.input sí es escribible (ahí caen las imágenes, v1).
         assert!(write_entry_tracked(&mut st, "src/content/media/a.png", fm, "x").is_ok());
+    }
+
+    #[test]
+    fn validaciones_de_esquema_como_su_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = st_with_config(dir.path(), CONFIG_YAML);
+        let fm = Value::Mapping(Mapping::new());
+
+        // Extensión que no es la de la colección (.md): su 400.
+        let err = write_entry_tracked(&mut st, "src/content/blog/a.json", fm.clone(), "x")
+            .unwrap_err();
+        assert!(err.contains("Invalid extension \"json\""), "{err}");
+
+        // El layout.json del canvas vive junto a la colección por diseño.
+        assert!(
+            write_entry_tracked(&mut st, "src/content/blog/layout.json", fm.clone(), "{}")
+                .is_ok()
+        );
+
+        // subfolders: false → solo hijos directos del path.
+        let yaml = "content:\n  - name: blog\n    path: src/content/blog\n    subfolders: false\n    fields: []\n";
+        let mut st2 = st_with_config(dir.path(), yaml);
+        assert!(
+            write_entry_tracked(&mut st2, "src/content/blog/directo.md", fm.clone(), "x").is_ok()
+        );
+        let err = write_entry_tracked(&mut st2, "src/content/blog/sub/anidado.md", fm, "x")
+            .unwrap_err();
+        assert!(err.contains("Subfolders are not allowed"), "{err}");
+
+        // Sin subfolders en el config, anidar sigue siendo válido.
+        let mut st3 = st_with_config(dir.path(), CONFIG_YAML);
+        let fm = Value::Mapping(Mapping::new());
+        assert!(
+            write_entry_tracked(&mut st3, "src/content/blog/sub/anidado.md", fm, "x").is_ok()
+        );
+    }
+
+    #[test]
+    fn media_extensions_limitan_imports_y_deletes() {
+        let dir = tempfile::tempdir().unwrap();
+        // `extensions: [image]` expande la categoría de su config.ts.
+        let yaml = "media:\n  input: m\n  extensions: [image, pdf]\ncontent: []\n";
+        let mut st = st_with_config(dir.path(), yaml);
+
+        let png = dir.path().join("foto.png");
+        fs::write(&png, b"x").unwrap();
+        assert!(crate::media::import_media_impl(&mut st, png.to_str().unwrap()).is_ok());
+
+        let exe = dir.path().join("run.exe");
+        fs::write(&exe, b"x").unwrap();
+        let err = crate::media::import_media_impl(&mut st, exe.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("Invalid extension \"exe\""), "{err}");
+
+        // Parity: su DELETE de media también valida la extensión.
+        let err = crate::media::delete_media_impl(&mut st, "m/run.exe").unwrap_err();
+        assert!(err.contains("Invalid extension"), "{err}");
+    }
+
+    #[test]
+    fn renombrar_un_type_file_se_rechaza_como_su_rename_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "content:\n  - name: hero\n    type: file\n    path: src/content/hero.json\n    fields: []\n";
+        let mut st = st_with_config(dir.path(), yaml);
+        fs::create_dir_all(dir.path().join("src/content")).unwrap();
+        fs::write(dir.path().join("src/content/hero.json"), "{}\n").unwrap();
+        let err = rename_entry_impl(&mut st, "src/content/hero.json", "otro.json").unwrap_err();
+        assert!(err.contains("Renaming content of type \"file\""), "{err}");
     }
 
     #[test]
