@@ -1,3 +1,4 @@
+mod entry;
 mod repo;
 mod state;
 
@@ -10,7 +11,9 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             repo::open_repo,
-            repo::list_entries
+            repo::list_entries,
+            entry::read_entry,
+            entry::write_entry
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
