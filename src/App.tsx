@@ -469,7 +469,16 @@ export default function App() {
   }, []);
 
   const goHome = useCallback(() => {
-    guardNav(() => setView({ kind: "home" }));
+    // "All projects" sale del proyecto: el home es la pantalla completa,
+    // sin sidebar (como su "/"). Si queda estado del proyecto, el flujo
+    // de abrir repone todo.
+    guardNav(() => {
+      setSummary(null);
+      setStatus(null);
+      setConfig(null);
+      setRows([]);
+      setView({ kind: "home" });
+    });
   }, [guardNav]);
 
 
@@ -711,21 +720,6 @@ export default function App() {
             summary={summary}
             remote={summary.mode === "remote"}
             onPick={summary.mode === "remote" ? goHome : pickFolder}
-          />
-        ) : view.kind === "home" ? (
-          <HomePage
-            user={homeUser}
-            loadRepos={(keyword) => api.githubListRepos(keyword)}
-            onSignOut={() => void handleSignOut()}
-            onOpenRepo={(v) => guardNav(() => void handleOpenRepo(v))}
-            onCreateTemplate={(t, n) =>
-              new Promise<string | null>((resolve) => {
-                guardNav(() => {
-                  void handleCreateTemplate(t, n).then(resolve);
-                });
-              })
-            }
-            onSignIn={() => setView({ kind: "signin" })}
           />
         ) : view.kind === "collection" ? (
           <CollectionTable
