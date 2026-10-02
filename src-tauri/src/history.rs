@@ -14,6 +14,9 @@ pub struct CommitInfo {
     pub time: i64,
     /// true si el commit no llegó al upstream: se etiqueta local.
     pub local: bool,
+    /// Link al commit en GitHub; solo en modo remoto (su entry-history
+    /// enlaza html_url).
+    pub html_url: Option<String>,
 }
 
 const MAX_COMMITS: usize = 20;
@@ -80,6 +83,7 @@ pub fn file_history_impl(
                 author: commit.author().name().unwrap_or("?").to_string(),
                 time: commit.time().seconds(),
                 local: !pushed.contains(&oid),
+                html_url: None,
             });
             if out.len() >= MAX_COMMITS {
                 break;
@@ -90,15 +94,43 @@ pub fn file_history_impl(
 }
 
 #[tauri::command]
-pub fn file_history(
+pub async fn file_history(
     state: tauri::State<'_, AppState>,
-    path: &str,
+    path: String,
 ) -> Result<Vec<CommitInfo>, String> {
-    let guard = state.lock().unwrap();
-    match guard.as_ref().ok_or("no hay proyecto abierto")? {
-        Project::Local(st) => file_history_impl(&st.repo, path),
-        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
-    }
+    let ctx = {
+        let guard = state.lock().unwrap();
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return file_history_impl(&st.repo, &path),
+            Project::Remote(rs) => crate::remote::remote_ctx(rs),
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let (t, c, p) = (token.clone(), ctx.clone(), path.clone());
+    // Su entries/[path]/history: /commits?path=&sha={branch}. En remoto
+    // nada queda "local": todo vive en la rama.
+    tauri::async_runtime::spawn_blocking(move || {
+        let commits =
+            crate::gh_api::list_commits(&t, &c.owner, &c.repo, &p, &c.branch, MAX_COMMITS)
+                .map_err(crate::remote::gh_error_ui)?;
+        Ok(commits
+            .into_iter()
+            .map(|gc| {
+                let author = gc.author_name();
+                let time = crate::gh_api::iso_to_unix(&gc.commit.author.date).unwrap_or(0);
+                CommitInfo {
+                    oid: gc.sha,
+                    message: gc.commit.message,
+                    author,
+                    time,
+                    local: false,
+                    html_url: Some(gc.html_url),
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("historial: {e}"))?
 }
 
 #[cfg(test)]
