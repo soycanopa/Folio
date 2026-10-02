@@ -44,6 +44,19 @@ type View =
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
+// Barra de arrastre universal: el Overlay quitó el title bar nativo y
+// las zonas de arrastre por pantalla eran parches frágiles. Esta franja
+// de 28px (donde viven los semáforos) es LA superficie para mover y
+// hacer zoom (doble-click) de la ventana, siempre y en toda pantalla.
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-full flex-col">
+      <div data-tauri-drag-region className="h-7 shrink-0 bg-panel" />
+      <div className="min-h-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
 // El mensaje de su server al guardar, incluido el aviso de auto-rename.
 function savedMessage(path: string, savedAs: string): string {
   return savedAs !== path
@@ -615,15 +628,17 @@ export default function App() {
 
   if (view.kind === "signin") {
     return (
-      <SignInScreen
-        onStart={api.githubLoginStart}
-        onPoll={api.githubLoginPoll}
-        onAuthorized={async () => {
-          const session = await api.githubSession().catch(() => null);
-          setGhSession(session);
-          setView({ kind: "home" });
-        }}
-      />
+      <Shell>
+        <SignInScreen
+          onStart={api.githubLoginStart}
+          onPoll={api.githubLoginPoll}
+          onAuthorized={async () => {
+            const session = await api.githubSession().catch(() => null);
+            setGhSession(session);
+            setView({ kind: "home" });
+          }}
+        />
+      </Shell>
     );
   }
 
@@ -654,7 +669,7 @@ export default function App() {
 
   if (!summary) {
     return (
-      <>
+      <Shell>
         <HomePage
           user={homeUser}
           loadRepos={(keyword) => api.githubListRepos(keyword)}
@@ -664,7 +679,7 @@ export default function App() {
           onSignOut={() => void handleSignOut()}
         />
         {openModeDialog}
-      </>
+      </Shell>
     );
   }
 
@@ -674,8 +689,9 @@ export default function App() {
       : null;
 
   return (
-    <div className="flex h-full">
-      <Sidebar
+    <Shell>
+      <div className="flex h-full">
+        <Sidebar
         summary={summary}
         status={status}
         collections={config?.content ?? []}
@@ -935,7 +951,8 @@ export default function App() {
           }}
         />
       )}
-    </div>
+      </div>
+    </Shell>
   );
 }
 
