@@ -4,6 +4,8 @@ export interface Media {
   output?: string | null;
   /** false/ausente → conserva nombre; "safe" | "random". */
   rename?: string | null;
+  /** Extensiones permitidas (categorías ya expandidas); vacío = sin límite. */
+  extensions?: string[];
 }
 
 export interface MediaRef {
@@ -58,6 +60,10 @@ export interface ContentItem {
   group?: string | null;
   /** `commit.templates` del ítem (mensajes del modo remoto). */
   commit_templates?: CommitTemplates | null;
+  /** Extensión exigida, derivada del filename/path como su config.ts. */
+  extension: string;
+  /** `subfolders: false` → solo archivos directos en el path. */
+  subfolders?: boolean | null;
 }
 
 export interface PagesConfig {

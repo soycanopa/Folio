@@ -48,6 +48,60 @@ pub struct Media {
     /// `"random"` genera nombre. Booleano true se trata como safe, como
     /// hace Pages CMS en su `lib/utils/file.ts`.
     pub rename: Option<String>,
+    /// `media.extensions` con las categorías expandidas (vacío = sin
+    /// restricción), como su normalización en `lib/config.ts`.
+    pub extensions: Vec<String>,
+}
+
+/// Sus categorías de `lib/utils/file.ts`: `extensions: [image]` en el
+/// config expande a la lista concreta.
+const EXTENSION_CATEGORIES: [(&str, &[&str]); 8] = [
+    ("image", &["jpg", "jpeg", "apng", "png", "gif", "svg", "ico", "avif", "bmp", "tif", "tiff", "webp"]),
+    ("document", &["pdf", "doc", "docx", "ppt", "pptx", "vxls", "xlsx", "txt", "rtf"]),
+    ("video", &["mp4", "avi", "mov", "wmv", "flv", "mpeg", "webm", "ogv", "ts", "3gp", "3g2"]),
+    ("audio", &["mp3", "wav", "aac", "ogg", "flac", "weba", "oga", "opus", "mid", "midi", "3gp", "3g2"]),
+    ("compressed", &["zip", "rar", "7z", "tar", "gz", "tgz", "bz", "bz2"]),
+    ("code", &["js", "jsx", "ts", "tsx", "html", "css", "scss", "json", "xml", "yaml", "yml", "md", "py", "rb", "php", "java", "c", "cpp", "h", "cs", "go", "rs", "sql"]),
+    ("font", &["ttf", "otf", "woff", "woff2", "eot"]),
+    ("spreadsheet", &["csv", "tsv", "ods"]),
+];
+
+fn parse_extensions(v: Option<&Value>, warnings: &mut Vec<String>) -> Vec<String> {
+    let Some(seq) = v.and_then(Value::as_sequence) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in seq {
+        match item.as_str() {
+            Some(s) => {
+                if let Some((_, list)) = EXTENSION_CATEGORIES
+                    .iter()
+                    .find(|(cat, _)| *cat == s)
+                {
+                    out.extend(list.iter().map(|e| e.to_string()));
+                } else {
+                    out.push(s.to_string());
+                }
+            }
+            None => warnings.push(format!(
+                "media.extensions: valor no string ignorado ({item:?})"
+            )),
+        }
+    }
+    out
+}
+
+/// Su `getFileExtension`: texto tras el último punto; los dotfiles sin
+/// otro punto no tienen extensión.
+pub(crate) fn ext_of(path: &str) -> String {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    if filename.starts_with('.') && !filename[1..].contains('.') {
+        return String::new();
+    }
+    match filename.rfind('.') {
+        Some(i) => filename[i + 1..].to_string(),
+        None => String::new(),
+    }
 }
 
 #[derive(Serialize, Clone, Debug, Default, PartialEq)]
@@ -132,6 +186,11 @@ pub struct ContentItem {
     pub group: Option<String>,
     /// `commit.templates` del ítem (su `schemaCommitTemplates`).
     pub commit_templates: Option<CommitTemplates>,
+    /// Extensión exigida a los archivos del ítem, derivada del
+    /// `filename`/path como su normalización (`lib/config.ts`).
+    pub extension: String,
+    /// `subfolders: false` → solo archivos directos en el path.
+    pub subfolders: Option<bool>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -162,29 +221,31 @@ fn parse_rename(v: Option<&Value>, warnings: &mut Vec<String>) -> Option<String>
     }
 }
 
+fn media_from_mapping(m: &Mapping, warnings: &mut Vec<String>) -> Media {
+    Media {
+        input: get_str(m, "input"),
+        output: get_str(m, "output"),
+        rename: parse_rename(m.get("rename"), warnings),
+        extensions: parse_extensions(m.get("extensions"), warnings),
+    }
+}
+
 fn parse_media(v: Option<&Value>, warnings: &mut Vec<String>) -> Media {
     let empty = Media {
         input: None,
         output: None,
         rename: None,
+        extensions: Vec::new(),
     };
     match v {
         None | Some(Value::Null) => empty,
-        Some(Value::Mapping(m)) => Media {
-            input: get_str(m, "input"),
-            output: get_str(m, "output"),
-            rename: parse_rename(m.get("rename"), warnings),
-        },
+        Some(Value::Mapping(m)) => media_from_mapping(m, warnings),
         Some(Value::Sequence(seq)) => {
             warnings.push(
                 "media: hay varios sources; v0 usa solo el primero".to_string(),
             );
             match seq.first().and_then(Value::as_mapping) {
-                Some(m) => Media {
-                    input: get_str(m, "input"),
-                    output: get_str(m, "output"),
-                    rename: parse_rename(m.get("rename"), warnings),
-                },
+                Some(m) => media_from_mapping(m, warnings),
                 None => empty,
             }
         }
@@ -360,6 +421,15 @@ fn parse_content_items(
             warnings,
             &format!("content {name}"),
         );
+        // Su normalización: extensión del filename (colecciones) o del
+        // propio path (files); sin filename el default termina en .md.
+        let filename_for_ext = if kind == "file" {
+            path.clone()
+        } else {
+            get_str(m, "filename").unwrap_or_else(|| "{slug}.md".to_string())
+        };
+        let extension = ext_of(&filename_for_ext);
+        let subfolders = m.get("subfolders").and_then(Value::as_bool);
         out.push(ContentItem {
             name,
             kind: kind.clone(),
@@ -371,6 +441,8 @@ fn parse_content_items(
             operations: resolve_operations(&kind, m),
             group: group.map(str::to_string),
             commit_templates,
+            extension,
+            subfolders,
         });
     }
 }
@@ -516,5 +588,58 @@ mod tests {
         let raw = "content:\n  - name: blog\n    path: a\n    fields: []\n  - name: otro\n    path: b\n    fields: []\n";
         let cfg = parse_config(raw).unwrap();
         assert!(cfg.content[1].commit_templates.is_none());
+    }
+
+    #[test]
+    fn extension_se_deriva_del_filename_como_su_normalizacion() {
+        // Sin filename: el default termina en .md.
+        let cfg = parse_config("content:\n  - name: blog\n    path: a\n    fields: []\n").unwrap();
+        assert_eq!(cfg.content[0].extension, "md");
+        // filename explícito manda.
+        let cfg = parse_config(
+            "content:\n  - name: blog\n    path: a\n    filename: \"{slug}.json\"\n    fields: []\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.content[0].extension, "json");
+        // type: file la deriva del propio path.
+        let cfg = parse_config(
+            "content:\n  - name: hero\n    type: file\n    path: src/hero.yaml\n    fields: []\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.content[0].extension, "yaml");
+        // subfolders llega tal cual.
+        let cfg = parse_config(
+            "content:\n  - name: blog\n    path: a\n    subfolders: false\n    fields: []\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.content[0].subfolders, Some(false));
+    }
+
+    #[test]
+    fn media_extensions_expande_categorias() {
+        let cfg = parse_config("media:\n  input: m\n  extensions: [image, pdf]\ncontent: []\n")
+            .unwrap();
+        assert!(cfg.media.extensions.contains(&"png".to_string()));
+        assert!(cfg.media.extensions.contains(&"webp".to_string()));
+        assert!(cfg.media.extensions.contains(&"pdf".to_string()));
+        assert!(!cfg.media.extensions.contains(&"exe".to_string()));
+
+        // Valor no string avisa y se ignora.
+        let cfg = parse_config("media:\n  input: m\n  extensions: [png, 42]\ncontent: []\n")
+            .unwrap();
+        assert!(cfg.media.extensions.contains(&"png".to_string()));
+        assert!(cfg
+            .warnings
+            .iter()
+            .any(|w| w.contains("media.extensions")));
+    }
+
+    #[test]
+    fn ext_of_como_su_get_file_extension() {
+        assert_eq!(ext_of("a/b/post.md"), "md");
+        assert_eq!(ext_of("post.tar.gz"), "gz");
+        assert_eq!(ext_of("sinext"), "");
+        assert_eq!(ext_of(".gitkeep"), "");
+        assert_eq!(ext_of(".config.json"), "json");
     }
 }
