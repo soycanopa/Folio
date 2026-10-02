@@ -24,6 +24,7 @@ pub struct RemoteState {
     pub files: HashMap<String, RemoteFile>,
 }
 
+#[derive(Clone)]
 pub struct RemoteFile {
     pub sha: String,
     pub text: String,

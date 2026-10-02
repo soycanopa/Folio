@@ -148,15 +148,37 @@ pub fn clone_into(url: &str, dest: &str) -> Result<(), String> {
 /// `collection` es el `path` de la colección bajo la raíz (p.ej.
 /// `src/content/blog`), tal como viene del `.pages.yml`.
 #[tauri::command]
-pub fn list_entries(
+pub async fn list_entries(
     state: tauri::State<'_, AppState>,
-    collection: &str,
+    collection: String,
 ) -> Result<Vec<EntryRef>, String> {
-    let guard = state.lock().unwrap();
-    match guard.as_ref().ok_or("no hay proyecto abierto")? {
-        Project::Local(st) => list_entries_impl(&st.root, collection),
-        Project::Remote(_) => Err(WIP_REMOTE.to_string()),
+    let ctx = {
+        let guard = state.lock().unwrap();
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return list_entries_impl(&st.root, &collection),
+            Project::Remote(rs) => crate::remote::remote_ctx(rs),
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let (t, c, dir) = (token.clone(), ctx.clone(), collection.clone());
+    let (mut paths, files) = tauri::async_runtime::spawn_blocking(move || {
+        let mut paths = Vec::new();
+        let mut files = std::collections::HashMap::new();
+        crate::remote::fetch_collection(&t, &c, &dir, &mut paths, &mut files)?;
+        Ok::<_, String>((paths, files))
+    })
+    .await
+    .map_err(|e| format!("listar entradas: {e}"))??;
+    {
+        let mut guard = state.lock().unwrap();
+        if let Some(Project::Remote(rs)) = guard.as_mut() {
+            if crate::remote::is_same_remote(rs, &ctx) {
+                rs.files.extend(files);
+            }
+        }
     }
+    paths.sort();
+    Ok(paths.into_iter().map(|path| EntryRef { path }).collect())
 }
 
 /// Los comandos de lectura/escritura remota llegan en los siguientes
