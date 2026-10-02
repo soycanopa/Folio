@@ -181,10 +181,6 @@ pub async fn list_entries(
     Ok(paths.into_iter().map(|path| EntryRef { path }).collect())
 }
 
-/// Los comandos de lectura/escritura remota llegan en los siguientes
-/// commits de esta misma fase.
-pub(crate) const WIP_REMOTE: &str = "modo remoto: disponible en el siguiente paso de la fase";
-
 #[tauri::command]
 pub fn repo_status(state: tauri::State<'_, AppState>) -> Result<RepoStatus, String> {
     let guard = state.lock().unwrap();
