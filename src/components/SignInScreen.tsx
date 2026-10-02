@@ -69,7 +69,7 @@ export function SignInScreen({
 
   return (
     <div
-      data-tauri-drag-region
+      data-tauri-drag-region="deep"
       className="flex min-h-screen items-center justify-center p-4 md:p-6"
     >
       {/* Card elevada: panel es el oscuro-un-punto-más-claro del canvas. */}
