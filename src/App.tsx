@@ -376,17 +376,26 @@ export default function App() {
     canvasLayout !== null &&
     JSON.stringify(canvasLayout) !== canvasSnapshot;
   const dirty = entryDirty || canvasDirty;
+  // Como su isBusy: mientras publica no se dispara otro save (un doble
+  // Cmd+S en remoto publicaría dos commits).
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const save = useCallback(async () => {
-    const v = viewRef.current;
-    const remote = summaryRef.current?.mode === "remote";
-    if (v.kind === "canvas") {
-      const persist = api.writeFileEntry(
-        canvasPath,
-        canvasLayout as unknown as Record<string, unknown>,
-        "",
-      );
-      try {
+    // Como su isBusy: mientras publica no se dispara otro save (un doble
+    // Cmd+S en remoto publicaría dos commits).
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const v = viewRef.current;
+      const remote = summaryRef.current?.mode === "remote";
+      if (v.kind === "canvas") {
+        const persist = api.writeFileEntry(
+          canvasPath,
+          canvasLayout as unknown as Record<string, unknown>,
+          "",
+        );
         // Remoto: Save publica directo en la rama (decisión del dueño);
         // toast como su entry.tsx ("Saving your file" → mensaje del save).
         const path = remote
@@ -400,17 +409,13 @@ export default function App() {
         if (path !== canvasPath) setCanvasPath(path);
         if (!remote) refreshStatus();
         else setMessage("");
-      } catch (e) {
-        setMessage(String(e));
+        return;
       }
-      return;
-    }
-    if (v.kind !== "entry") return;
-    const persist =
-      v.collection.kind === "file"
-        ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
-        : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
-    try {
+      if (v.kind !== "entry") return;
+      const persist =
+        v.collection.kind === "file"
+          ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
+          : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
       const path = remote
         ? await toastPromise(persist, {
             loading: "Saving your file",
@@ -434,6 +439,9 @@ export default function App() {
       }
     } catch (e) {
       setMessage(String(e));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }, [canvasLayout, canvasPath, loadRows, refreshStatus]);
 
@@ -695,6 +703,7 @@ export default function App() {
             collection={view.collection}
             root={summary.root}
             remote={summary.mode === "remote"}
+            busy={saving}
             mediaInput={config?.media.input ?? null}
             cards={canvasRows}
             layout={canvasLayout ?? DEFAULT_LAYOUT}
@@ -723,6 +732,7 @@ export default function App() {
             draft={view.draft}
             dirty={dirty}
             remote={summary.mode === "remote"}
+            busy={saving}
             onFmChange={(name, value) =>
               setView((v) =>
                 v.kind === "entry"

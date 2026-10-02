@@ -36,6 +36,8 @@ interface EntryEditorProps {
   showBack: boolean;
   /** Modo remoto: los textos reflejan que todo se publica al guardar. */
   remote?: boolean;
+  /** Save en curso: el botón se bloquea (su isBusy). */
+  busy?: boolean;
   root: string;
   mediaInput?: string | null;
   mediaItems: MediaRef[];
@@ -57,6 +59,7 @@ export function EntryEditor({
   dirty,
   showBack,
   remote,
+  busy,
   root,
   mediaInput,
   mediaItems,
@@ -230,7 +233,7 @@ export function EntryEditor({
           </div>
           <button
             onClick={onSave}
-            disabled={!dirty}
+            disabled={!dirty || busy}
             className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
           >
             Save
