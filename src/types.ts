@@ -64,11 +64,15 @@ export interface ContentItem {
   extension: string;
   /** `subfolders: false` → solo archivos directos en el path. */
   subfolders?: boolean | null;
+  /** Actions declaradas en el ítem (su getSchemaActions filtra por scope). */
+  actions: Action[];
 }
 
 export interface PagesConfig {
   media: Media;
   content: ContentItem[];
+  /** `actions:` de la raíz (scope repo). Su getRootActions. */
+  actions: Action[];
   warnings: string[];
   settings: { commit_templates: CommitTemplates };
 }
@@ -78,6 +82,60 @@ export interface PagesConfig {
 export interface ConfigSave {
   path: string;
   config: PagesConfig;
+}
+
+// ---- Actions (su lib/actions.ts) ----
+
+export interface Confirm {
+  enabled: boolean;
+  title?: string | null;
+  message?: string | null;
+  button?: string | null;
+}
+
+export interface ActionField {
+  name: string;
+  label: string;
+  /** text | textarea | select | checkbox | number (su RepoActionField). */
+  field_type: string;
+  required: boolean;
+  default?: string | null;
+  values: string[];
+}
+
+export interface Action {
+  name: string;
+  label: string;
+  workflow: string;
+  action_ref?: string | null;
+  /** collection | entry | null (solo página/raíz). */
+  scope?: string | null;
+  cancelable?: boolean | null;
+  confirm?: Confirm | null;
+  fields: ActionField[];
+}
+
+/** Corrida de GitHub Actions (el ActionRunSummary de su server, sin DB). */
+export interface ActionRunInfo {
+  id: number;
+  workflow: string;
+  status?: string | null;
+  conclusion?: string | null;
+  html_url?: string | null;
+  head_sha?: string | null;
+  head_branch?: string | null;
+  event?: string | null;
+  triggered_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  run_started_at?: string | null;
+}
+
+export interface ActionContext {
+  type: string;
+  name?: string | null;
+  path?: string | null;
+  data?: Record<string, unknown>;
 }
 
 export interface RepoSummary {

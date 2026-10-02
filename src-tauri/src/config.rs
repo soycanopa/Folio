@@ -192,14 +192,66 @@ pub struct ContentItem {
     pub extension: String,
     /// `subfolders: false` → solo archivos directos en el path.
     pub subfolders: Option<bool>,
+    /// `actions:` del ítem (scope collection o entry según el uso que la
+    /// UI le dé; su `getSchemaActions` filtra por `action.scope`).
+    #[serde(default)]
+    pub actions: Vec<Action>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct PagesConfig {
     pub media: Media,
     pub content: Vec<ContentItem>,
+    /// `actions:` de la raíz (scope repo). Su `getRootActions`.
+    #[serde(default)]
+    pub actions: Vec<Action>,
     pub warnings: Vec<String>,
     pub settings: Settings,
+}
+
+/// Una action del config: dispara un workflow de GitHub Actions
+/// (`workflow_dispatch`). Puerto de su `RepoActionConfig` (lib/actions.ts).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Action {
+    pub name: String,
+    pub label: String,
+    /// Filename del workflow (el `workflow_id` del dispatch).
+    pub workflow: String,
+    /// `ref` del dispatch; ausente/"current" → rama actual (su
+    /// `resolveActionRef`, se resuelve al correr).
+    pub action_ref: Option<String>,
+    /// Dónde vive el botón: "collection" (header de la colección),
+    /// "entry" (header de la entrada) o ausente (solo la página Actions
+    /// y el grupo raíz, como su `getSchemaActions`).
+    pub scope: Option<String>,
+    /// Default true en su UI; `false` oculta "Cancel run".
+    pub cancelable: Option<bool>,
+    /// `confirm: bool` o `{title, message, button}`; default true.
+    pub confirm: Option<Confirm>,
+    pub fields: Vec<ActionField>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Confirm {
+    pub enabled: bool,
+    pub title: Option<String>,
+    pub message: Option<String>,
+    pub button: Option<String>,
+}
+
+/// Campo del formulario al correr una action. Puerto de su
+/// `RepoActionField`: text | textarea | select | checkbox | number.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct ActionField {
+    pub name: String,
+    pub label: String,
+    pub field_type: String,
+    pub required: bool,
+    /// Su default es string|number|bool; se conserva como string y la UI
+    /// lo tipa por field_type.
+    pub default: Option<String>,
+    /// Values del select (su `options: [a, b]` / `options.values`).
+    pub values: Vec<String>,
 }
 
 fn get_str(m: &Mapping, key: &str) -> Option<String> {
@@ -321,6 +373,138 @@ fn parse_fields(
     out
 }
 
+/// Sus `actions:` (raíz o ítem). Sin name/workflow se avisa y se ignora
+/// la action; lo demás toma defaults como su `RepoActionConfig`.
+fn parse_actions(v: Option<&Value>, ctx: &str, warnings: &mut Vec<String>) -> Vec<Action> {
+    let Some(seq) = v.and_then(Value::as_sequence) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in seq {
+        let Some(m) = item.as_mapping() else {
+            warnings.push(format!("{ctx}: action sin estructura; ignorada"));
+            continue;
+        };
+        let Some(name) = get_str(m, "name") else {
+            warnings.push(format!("{ctx}: action sin name; ignorada"));
+            continue;
+        };
+        let Some(workflow) = get_str(m, "workflow") else {
+            warnings.push(format!("{ctx}: action {name} sin workflow; ignorada"));
+            continue;
+        };
+        let confirm = match m.get("confirm") {
+            None | Some(Value::Null) => None,
+            Some(Value::Bool(b)) => Some(Confirm {
+                enabled: *b,
+                title: None,
+                message: None,
+                button: None,
+            }),
+            Some(Value::Mapping(c)) => Some(Confirm {
+                // confirm: false no convive con el objeto en su schema;
+                // un objeto implica confirmar.
+                enabled: true,
+                title: get_str(c, "title"),
+                message: get_str(c, "message"),
+                button: get_str(c, "button"),
+            }),
+            Some(other) => {
+                warnings.push(format!(
+                    "{ctx}: action {name} confirm no reconocido; se ignora ({other:?})"
+                ));
+                None
+            }
+        };
+        let scope = match get_str(m, "scope") {
+            None => None,
+            Some(s) if s == "collection" || s == "entry" => Some(s),
+            Some(other) => {
+                warnings.push(format!(
+                    "{ctx}: action {name} scope {other:?} no reconocido; se ignora"
+                ));
+                None
+            }
+        };
+        out.push(Action {
+            label: get_str(m, "label").unwrap_or_else(|| name.clone()),
+            name,
+            workflow,
+            action_ref: get_str(m, "ref"),
+            scope,
+            cancelable: m.get("cancelable").and_then(Value::as_bool),
+            confirm,
+            fields: parse_action_fields(m.get("fields"), ctx, warnings),
+        });
+    }
+    out
+}
+
+fn parse_action_fields(
+    fields: Option<&Value>,
+    ctx: &str,
+    warnings: &mut Vec<String>,
+) -> Vec<ActionField> {
+    let Some(seq) = fields.and_then(Value::as_sequence) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in seq {
+        let Some(m) = item.as_mapping() else {
+            warnings.push(format!("{ctx}: action field sin estructura; ignorado"));
+            continue;
+        };
+        let Some(name) = get_str(m, "name") else {
+            warnings.push(format!("{ctx}: action field sin name; ignorado"));
+            continue;
+        };
+        let field_type = get_str(m, "type").unwrap_or_else(|| "text".to_string());
+        if !matches!(
+            field_type.as_str(),
+            "text" | "textarea" | "select" | "checkbox" | "number"
+        ) {
+            warnings.push(format!(
+                "{ctx}: action field {name} de tipo {field_type} sin soporte; se trata como text"
+            ));
+        }
+        // Su default es string|number|bool; se conserva su texto y la UI
+        // lo convierte según el tipo.
+        let default = match m.get("default") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Bool(b)) => Some(b.to_string()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            Some(other) => {
+                warnings.push(format!(
+                    "{ctx}: action field {name} default no escalar; se ignora ({other:?})"
+                ));
+                None
+            }
+        };
+        let values = match m.get("options") {
+            Some(Value::Sequence(seq)) => seq
+                .iter()
+                .filter_map(|o| {
+                    o.as_mapping()
+                        .and_then(|om| om.get("value"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        out.push(ActionField {
+            label: get_str(m, "label").unwrap_or_else(|| name.clone()),
+            name,
+            field_type,
+            required: m.get("required").and_then(Value::as_bool).unwrap_or(false),
+            default,
+            values,
+        });
+    }
+    out
+}
+
 pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
     let root: Value =
         serde_yaml_ng::from_str(raw).map_err(|e| format!(".pages.yml inválido: {e}"))?;
@@ -352,9 +536,12 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
         _ => warnings.push("content ausente o no es una lista; no hay colecciones".to_string()),
     }
 
+    let actions = parse_actions(root_map.get("actions"), "actions", &mut warnings);
+
     Ok(PagesConfig {
         media,
         content,
+        actions,
         warnings,
         settings,
     })
@@ -440,6 +627,11 @@ fn parse_content_items(
         };
         let extension = ext_of(&filename_for_ext);
         let subfolders = m.get("subfolders").and_then(Value::as_bool);
+        let item_actions = parse_actions(
+            m.get("actions"),
+            &format!("content {name}"),
+            warnings,
+        );
         out.push(ContentItem {
             name,
             kind: kind.clone(),
@@ -453,6 +645,7 @@ fn parse_content_items(
             commit_templates,
             extension,
             subfolders,
+            actions: item_actions,
         });
     }
 }
@@ -842,5 +1035,42 @@ mod tests {
     fn validate_config_refleja_al_parser() {
         assert!(validate_config("content: []\n".to_string()).is_ok());
         assert!(validate_config("content: [".to_string()).is_err());
+    }
+
+    #[test]
+    fn actions_de_raiz_y_de_item_se_parsean() {
+        let raw = "actions:\n  - name: deploy\n    label: Deploy site\n    workflow: deploy.yml\n    ref: v1\n    cancelable: false\n    confirm:\n      title: Deploy?\n      message: This will deploy.\n      button: Deploy\n    fields:\n      - name: env\n        label: Environment\n        type: select\n        required: true\n        default: production\n        options:\n          - {label: Prod, value: production}\n          - {label: Staging, value: staging}\ncontent:\n  - name: blog\n    path: src/content/blog\n    actions:\n      - name: purge\n        workflow: purge.yml\n    fields: []\n";
+        let cfg = parse_config(raw).unwrap();
+        let a = &cfg.actions[0];
+        assert_eq!(a.name, "deploy");
+        assert_eq!(a.workflow, "deploy.yml");
+        assert_eq!(a.action_ref.as_deref(), Some("v1"));
+        assert_eq!(a.cancelable, Some(false));
+        let confirm = a.confirm.as_ref().unwrap();
+        assert!(confirm.enabled && confirm.title.as_deref() == Some("Deploy?"));
+        let f = &a.fields[0];
+        assert_eq!(f.field_type, "select");
+        assert!(f.required);
+        assert_eq!(f.default.as_deref(), Some("production"));
+        assert_eq!(f.values, vec!["production".to_string(), "staging".to_string()]);
+        // Per-ítem y defaults (label = name, sin confirm, sin fields).
+        let purge = &cfg.content[0].actions[0];
+        assert_eq!(purge.name, "purge");
+        assert_eq!(purge.label, "purge");
+        assert!(purge.confirm.is_none() && purge.fields.is_empty());
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+    }
+
+    #[test]
+    fn action_mala_avisa_y_no_corta() {
+        let raw = "actions:\n  - label: sin name\n    workflow: a.yml\n  - name: sin workflow\n  - name: ok\n    workflow: ok.yml\ncontent: []\n";
+        let cfg = parse_config(raw).unwrap();
+        assert_eq!(cfg.actions.len(), 1);
+        assert_eq!(cfg.actions[0].name, "ok");
+        assert_eq!(cfg.warnings.len(), 2, "{:?}", cfg.warnings);
+
+        // confirm: false explícito → deshabilita la confirmación.
+        let cfg = parse_config("actions:\n  - name: a\n    workflow: w.yml\n    confirm: false\ncontent: []\n").unwrap();
+        assert_eq!(cfg.actions[0].confirm.as_ref().unwrap().enabled, false);
     }
 }

@@ -79,3 +79,36 @@ usuario):
   webview, así que los repos públicos usan `raw.githubusercontent.com`
   y los privados pasan por un proxy del core con caché por sha
   servida por el asset protocol.
+
+## Configuration (port de comportamiento, 2026-10-02)
+
+Su página `/configuration` (`app/(main)/[owner]/[repo]/[branch]/
+configuration/page.tsx`) es el Entry apuntando a `.pages.yml`; Folio la
+replica como vista propia (editor mono con el lint del parser abajo,
+guardar = commit del archivo). Divergencia: solo edita el `.pages.yml`
+existente (crear config quedó fuera de alcance, decisión del dueño);
+su CodeMirror se sustituye por un textarea con el mismo papel
+(validación del parser, errores visibles).
+
+## Actions (port de comportamiento, 2026-10-02)
+
+- **Página Actions**: su `components/actions/actions-page.tsx` — tabla de
+  corridas con polling 4s, filtros, iconos de estado y menú (View on
+  GitHub / Run again / Cancel run), con su `formatActionRunState`
+  (lib/actions.ts). Divergencias: su server guardaba el contexto y el
+  disparador en su DB (webhook `workflow_run`); GitHub no expone el
+  contexto, así que no hay columna Context, y "Triggered by" sale del
+  `actor` del run.
+- **RepoActionButtons** (`components/repo/repo-action-buttons.tsx`):
+  botones Run por action (scope collection/entry/raíz), diálogo de
+  confirm con su copy, defaults/required por tipo de field, y el toast
+  que sigue la corrida (su trackActionRun). El formulario de fields
+  reusa el FieldInput de Folio con el mapeo text→string,
+  textarea→text, checkbox→boolean.
+- **Dispatch**: su `app/api/[owner]/[repo]/[branch]/actions/route.ts` —
+  el payload viaja como el único input `payload` serializado (la
+  convención de sus workflows), con `source: "folio"`; el claim de la
+  corrida repite su `findWorkflowRun` (polling, ventana de 30s). Sin
+  su server: no hay DB de corridas, GitHub es la fuente de verdad, y
+  "Run again" usa el rerun nativo de GitHub en vez de re-despachar el
+  payload. Requiere el scope `workflow` en el OAuth del usuario.

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Plus, Search } from "lucide-react";
 import type { ContentItem } from "../types";
+import { ActionRunButton } from "./actions/ActionRunButton";
 
 export interface EntryRow {
   path: string;
@@ -51,11 +52,32 @@ export function CollectionTable({
   const label = (col: string) =>
     collection.fields.find((f) => f.name === col)?.label ?? col;
 
+  // Actions con scope collection: botones del header (su collection.tsx).
+  const collectionActions = (collection.actions ?? []).filter(
+    (a) => a.scope === "collection",
+  );
+
   return (
     <div className="flex h-full flex-col">
       <header
         className="flex items-center gap-3 px-6 pt-5 pb-4">
         <h1 className="text-xl font-semibold">{collection.label}</h1>
+        {collectionActions.length > 0 && (
+          <div className="flex items-center gap-2">
+            {collectionActions.map((a) => (
+              <ActionRunButton
+                key={a.name}
+                action={a}
+                context={{
+                  type: "collection",
+                  name: collection.name,
+                  path: collection.path,
+                  data: { label: collection.label, rootPath: collection.path },
+                }}
+              />
+            ))}
+          </div>
+        )}
         <div className="relative ml-auto w-64">
           <Search
             size={14}

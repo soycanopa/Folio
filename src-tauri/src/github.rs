@@ -110,7 +110,9 @@ pub fn start_device_code() -> Result<DeviceCodeStart, String> {
         "https://github.com/login/device/code",
         serde_json::json!({
             "client_id": OAUTH_CLIENT_ID,
-            "scope": "repo read:user",
+            // `workflow`: despachar workflow_dispatch exige el scope (la
+            // sesión vieja no lo gana: requiere re-login).
+            "scope": "repo read:user workflow",
         }),
     )?;
     Ok(DeviceCodeStart {

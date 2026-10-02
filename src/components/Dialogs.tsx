@@ -2,7 +2,7 @@ import { useState } from "react";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import type { ContentItem } from "../types";
 
-function Modal({
+export function Modal({
   title,
   children,
   onClose,
