@@ -205,6 +205,14 @@ struct RawRepo {
     default_branch: String,
     updated_at: String,
     owner: RawOwner,
+    #[serde(default)]
+    permissions: Option<RawPerms>,
+}
+
+#[derive(Deserialize)]
+struct RawPerms {
+    #[serde(default)]
+    push: bool,
 }
 
 #[derive(Deserialize)]
@@ -212,13 +220,27 @@ struct RawOwner {
     login: String,
 }
 
-pub fn list_repos(token: &str) -> Result<Vec<GhRepo>, String> {
-    let raws: Vec<RawRepo> = get_json_with_token(
-        "https://api.github.com/user/repos?sort=updated&per_page=30&affiliation=owner,collaborator,organization_member",
+/// Su endpoint /api/repos/[owner]: Search API con la query
+/// `{keyword} in:name user:{login} fork:true`, sort updated desc y
+/// per_page 5 — por eso la app muestra los últimos cinco.
+pub fn list_repos(token: &str, login: &str, keyword: &str) -> Result<Vec<GhRepo>, String> {
+    #[derive(Deserialize)]
+    struct RawSearch {
+        items: Vec<RawRepo>,
+    }
+    let q = urlencode(&format!(
+        "{keyword} in:name user:{login} fork:true"
+    ));
+    let raws: RawSearch = get_json_with_token(
+        &format!(
+            "https://api.github.com/search/repositories?q={q}&sort=updated&order=desc&per_page=5"
+        ),
         token,
     )?;
     Ok(raws
+        .items
         .into_iter()
+        .filter(|r| r.permissions.as_ref().map(|p| p.push).unwrap_or(true))
         .map(|r| GhRepo {
             repo: r
                 .full_name
@@ -232,6 +254,19 @@ pub fn list_repos(token: &str) -> Result<Vec<GhRepo>, String> {
             default_branch: r.default_branch,
         })
         .collect())
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Su "Copy template": crea una copia del repo template en la cuenta
@@ -306,9 +341,9 @@ pub fn github_logout() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn github_list_repos() -> Result<Vec<GhRepo>, String> {
+pub fn github_list_repos(keyword: &str) -> Result<Vec<GhRepo>, String> {
     let session = load_session()?.ok_or("sin sesión de GitHub")?;
-    list_repos(&session.token)
+    list_repos(&session.token, &session.login, keyword)
 }
 
 #[tauri::command]

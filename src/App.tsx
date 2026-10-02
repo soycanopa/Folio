@@ -29,7 +29,6 @@ import { MediaView } from "./components/Media";
 import { HomePage } from "./components/home/home-page";
 import { trackVisit } from "./lib/tracker";
 import { toast } from "sonner";
-import type { SelectableRepo } from "./components/home/repo-select";
 import { SignInScreen } from "./components/SignInScreen";
 
 // El canvas (v2) vive en la colección `showcase` del config (PRD.md).
@@ -505,13 +504,7 @@ export default function App() {
     return (
       <HomePage
         user={homeUser}
-        loadRepos={async (keyword) => {
-          const repos = await api.githubListRepos();
-          const q = keyword.trim().toLowerCase();
-          return repos.filter(
-            (r: SelectableRepo) => r.repo.toLowerCase().includes(q),
-          );
-        }}
+        loadRepos={(keyword) => api.githubListRepos(keyword)}
         onOpenRepo={(v) => void handleOpenRepo(v)}
         onCreateTemplate={handleCreateTemplate}
         onSignIn={() => setView({ kind: "signin" })}
@@ -562,13 +555,7 @@ export default function App() {
         ) : view.kind === "home" ? (
           <HomePage
             user={homeUser}
-            loadRepos={async (keyword) => {
-              const repos = await api.githubListRepos();
-              const q = keyword.trim().toLowerCase();
-              return repos.filter(
-                (r: SelectableRepo) => r.repo.toLowerCase().includes(q),
-              );
-            }}
+            loadRepos={(keyword) => api.githubListRepos(keyword)}
             onSignOut={() => void handleSignOut()}
             onOpenRepo={(v) => guardNav(() => void handleOpenRepo(v))}
             onCreateTemplate={(t, n) =>

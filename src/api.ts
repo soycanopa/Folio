@@ -49,7 +49,8 @@ export const api = {
   githubSession: () =>
     invoke<import("./types").GithubUser | null>("github_session"),
   githubLogout: () => invoke<void>("github_logout"),
-  githubListRepos: () => invoke<import("./types").GhRepo[]>("github_list_repos"),
+  githubListRepos: (keyword: string) =>
+    invoke<import("./types").GhRepo[]>("github_list_repos", { keyword }),
   listRecentRepos: () =>
     invoke<import("./types").RecentRepo[]>("list_recent_repos"),
   addRecentRepo: (path: string, ownerRepo?: string) =>
