@@ -47,12 +47,9 @@ export function HomePage({
   }, []);
 
   return (
-    <div
-      data-tauri-drag-region
-      className="max-w-screen-sm mx-auto px-4 pt-12 pb-4 md:px-6 md:pt-14 md:pb-6 space-y-8"
-    >
+    <div className="mx-auto flex h-full max-w-screen-sm flex-col px-4 pb-4 md:px-6 md:pb-6">
       {user && user.accounts.length > 0 ? (
-        <div className="min-h-[calc(100vh-12rem)] flex flex-col justify-center space-y-8">
+        <div className="my-auto w-full space-y-8">
           {hasRecentVisits && (
             <div className="space-y-4">
               <h2 className="text-lg font-medium tracking-tight">

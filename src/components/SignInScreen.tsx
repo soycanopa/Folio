@@ -79,10 +79,7 @@ export function SignInScreen({
   }, [device]);
 
   return (
-    <div
-      data-tauri-drag-region="false"
-      className="flex min-h-screen items-center justify-center p-4 md:p-6"
-    >
+    <div className="flex h-full items-center justify-center p-4 md:p-6">
       {/* Card elevada: panel es el oscuro-un-punto-más-claro del canvas. */}
       <div className="w-full max-w-[340px] space-y-6 rounded-2xl border border-line bg-panel p-8 shadow-2xl">
         <FolioBrand />
