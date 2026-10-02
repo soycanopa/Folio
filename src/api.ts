@@ -38,4 +38,6 @@ export const api = {
   push: () => invoke<void>("push"),
   listMedia: () => invoke<MediaRef[]>("list_media"),
   importMedia: (src: string) => invoke<MediaRef>("import_media", { src }),
+  fileHistory: (path: string) =>
+    invoke<import("./types").CommitInfo[]>("file_history", { path }),
 };

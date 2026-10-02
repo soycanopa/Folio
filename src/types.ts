@@ -72,3 +72,13 @@ export interface NewEntry {
   path: string;
   existed: boolean;
 }
+
+export interface CommitInfo {
+  oid: string;
+  message: string;
+  author: string;
+  /** Unix seconds. */
+  time: number;
+  /** true si no llegó al upstream. */
+  local: boolean;
+}
