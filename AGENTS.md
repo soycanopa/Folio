@@ -26,6 +26,7 @@ Las reglas generales provienen del contrato de Circulo (`soycanopa/circulo`, AGE
 
 ## Git y entrega
 
+- **Cada producto vive en su propio repositorio.** Nada de mezclar productos en un monorepo. Extraer una feature a un repo aparte requiere decisión explícita del dueño: el agente no decide solo cuándo algo es "grande" — lo propone y el dueño resuelve.
 - Todo el trabajo va en ramas (`feature/<fase-o-tema>`). Nunca commit directo a `main`; `main` solo recibe merges `--no-ff` de fase o fix.
 - Commits granulares: un cambio lógico cada uno. Mensaje `type(scope): summary` (`feat(core): …`, `fix(ui): …`, `test: …`, `docs: …`, `chore: …`).
 - Los tests son parte del trabajo, no un extra. El parser, el stage de git y cualquier módulo de core llevan sus tests en el mismo commit, nunca después.
