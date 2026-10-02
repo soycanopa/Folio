@@ -61,6 +61,10 @@ fn spike_edita_crea_commitea_y_el_arbol_ajeno_queda_intacto() {
     copy_fixture(&fixture, &root);
 
     let repo = git2::Repository::init(&root).unwrap();
+    let config = folio_lib::config::parse_config(
+        &fs::read_to_string(root.join(".pages.yml")).unwrap(),
+    )
+    .unwrap();
     // Commit inicial del fixture, como el setup de su README.
     {
         let mut files = Vec::new();
@@ -80,6 +84,7 @@ fn spike_edita_crea_commitea_y_el_arbol_ajeno_queda_intacto() {
     let mut st = RepoState {
         repo,
         root: root.clone(),
+        config: Some(config),
         touched: Vec::new(),
     };
 

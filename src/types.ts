@@ -1,0 +1,63 @@
+// Espejo de los tipos que serializa el core (src-tauri/src).
+export interface Media {
+  input?: string | null;
+  output?: string | null;
+}
+
+export interface Field {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  help?: string | null;
+}
+
+export interface ViewCfg {
+  fields: string[];
+  sort?: string | null;
+  order?: string | null;
+}
+
+export interface ContentItem {
+  name: string;
+  label: string;
+  path: string;
+  filename?: string | null;
+  fields: Field[];
+  view?: ViewCfg | null;
+}
+
+export interface PagesConfig {
+  media: Media;
+  content: ContentItem[];
+  warnings: string[];
+}
+
+export interface RepoSummary {
+  root: string;
+  branch: string;
+  has_config: boolean;
+  config_error?: string | null;
+}
+
+export interface RepoStatus {
+  branch: string;
+  dirty: boolean;
+  ahead: number;
+  behind: number;
+  has_upstream: boolean;
+}
+
+export interface EntryRef {
+  path: string;
+}
+
+export interface EntryContent {
+  frontmatter: Record<string, unknown>;
+  body: string;
+}
+
+export interface NewEntry {
+  path: string;
+  existed: boolean;
+}

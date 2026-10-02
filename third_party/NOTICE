@@ -1,0 +1,17 @@
+# Third-party notices
+
+## Pages CMS (hunvreus/pagescms) — MIT
+
+https://github.com/hunvreus/pagescms — ver `reference/pagescms` fuera de
+este repo para la copia de referencia.
+
+Folio usa de Pages CMS, con licencia MIT:
+
+- Los tokens del tema visual (paleta oklch del modo oscuro, radios),
+  derivados de su `app/globals.css`.
+- Su convención de contenido: el cuerpo del documento vive bajo la key
+  `body` del objeto de entrada (su `lib/serialization.ts`).
+
+Ningún archivo de Pages CMS se copió completo. Cuando se copie un
+componente (p.ej. un campo de `fields/`), debe llevar cabecera MIT y
+entrar en esta lista.

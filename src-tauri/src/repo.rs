@@ -5,18 +5,45 @@ use std::{
 
 use serde::Serialize;
 
-use crate::state::AppState;
+use crate::{
+    config::{self, PagesConfig},
+    state::{AppState, RepoState},
+};
 
 #[derive(Serialize)]
 pub struct RepoSummary {
     pub root: String,
     pub branch: String,
+    pub has_config: bool,
+    /// Motivo por el que el `.pages.yml` no se pudo usar, si aplica.
+    pub config_error: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct EntryRef {
     /// Path relativo a la raíz del repo, separadores '/'.
     pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct RepoStatus {
+    pub branch: String,
+    pub dirty: bool,
+    pub ahead: usize,
+    pub behind: usize,
+    pub has_upstream: bool,
+}
+
+/// Lee y parsea el `.pages.yml` de la raíz. Ausente → `None` sin error
+/// (estado vacío explicado en la UI); presente pero roto → error.
+fn load_config(root: &Path) -> (Option<PagesConfig>, Option<String>) {
+    match fs::read_to_string(root.join(".pages.yml")) {
+        Err(_) => (None, None),
+        Ok(raw) => match config::parse_config(&raw) {
+            Ok(cfg) => (Some(cfg), None),
+            Err(e) => (None, Some(e)),
+        },
+    }
 }
 
 #[tauri::command]
@@ -31,21 +58,24 @@ pub fn open_repo(state: tauri::State<'_, AppState>, path: &str) -> Result<RepoSu
         .ok()
         .and_then(|h| h.shorthand().ok().map(str::to_string))
         .unwrap_or_else(|| "(sin commits)".to_string());
+    let (cfg, config_error) = load_config(&root);
     let summary = RepoSummary {
         root: root.display().to_string(),
         branch,
+        has_config: cfg.is_some(),
+        config_error,
     };
-    *state.lock().unwrap() = Some(crate::state::RepoState {
+    *state.lock().unwrap() = Some(RepoState {
         repo,
         root,
+        config: cfg,
         touched: Vec::new(),
     });
     Ok(summary)
 }
 
 /// `collection` es el `path` de la colección bajo la raíz (p.ej.
-/// `src/content/blog`). Hasta el parser de `.pages.yml` (Fase 1) llega
-/// como string desde la UI.
+/// `src/content/blog`), tal como viene del `.pages.yml`.
 #[tauri::command]
 pub fn list_entries(
     state: tauri::State<'_, AppState>,
@@ -54,6 +84,56 @@ pub fn list_entries(
     let guard = state.lock().unwrap();
     let st = guard.as_ref().ok_or("no hay repo abierto")?;
     list_entries_impl(&st.root, collection)
+}
+
+#[tauri::command]
+pub fn repo_status(state: tauri::State<'_, AppState>) -> Result<RepoStatus, String> {
+    let guard = state.lock().unwrap();
+    let st = guard.as_ref().ok_or("no hay repo abierto")?;
+    let repo = &st.repo;
+
+    let branch = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().ok().map(str::to_string))
+        .unwrap_or_else(|| "(sin commits)".to_string());
+
+    let dirty = {
+        let mut opts = git2::StatusOptions::new();
+        opts.include_untracked(true);
+        let statuses = repo
+            .statuses(Some(&mut opts))
+            .map_err(|e| format!("status: {e}"))?;
+        statuses.iter().count() > 0
+    };
+
+    let mut ahead = 0;
+    let mut behind = 0;
+    let mut has_upstream = false;
+    if let Ok(head_ref) = repo.head() {
+        let branch_ref = git2::Branch::wrap(head_ref);
+        if let Ok(upstream) = branch_ref.upstream() {
+            if let (Ok(local), Ok(remote)) = (
+                repo.head().unwrap().peel_to_commit(),
+                upstream.get().peel_to_commit(),
+            ) {
+                let (a, b) = repo
+                    .graph_ahead_behind(local.id(), remote.id())
+                    .map_err(|e| format!("ahead/behind: {e}"))?;
+                ahead = a;
+                behind = b;
+                has_upstream = true;
+            }
+        }
+    }
+
+    Ok(RepoStatus {
+        branch,
+        dirty,
+        ahead,
+        behind,
+        has_upstream,
+    })
 }
 
 fn list_entries_impl(root: &Path, collection: &str) -> Result<Vec<EntryRef>, String> {
@@ -132,5 +212,15 @@ mod tests {
     fn abrir_carpeta_sin_git_es_error() {
         let dir = tempfile::tempdir().unwrap();
         assert!(git2::Repository::open(dir.path()).is_err());
+    }
+
+    #[test]
+    fn load_config_ausente_y_roto() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cfg, err) = load_config(dir.path());
+        assert!(cfg.is_none() && err.is_none());
+        fs::write(dir.path().join(".pages.yml"), "content: [").unwrap();
+        let (cfg, err) = load_config(dir.path());
+        assert!(cfg.is_none() && err.is_some());
     }
 }

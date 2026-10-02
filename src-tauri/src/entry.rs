@@ -76,6 +76,30 @@ pub fn read_entry_at(root: &Path, path: &str) -> Result<EntryContent, String> {
     })
 }
 
+// Invariante Folio: un write de contenido tiene que resolver dentro de
+// `content[].path` o `media.input` del `.pages.yml` (AGENTS.md). Sin
+// config parseada no hay contra qué validar, así que se rechaza.
+fn ensure_writable(st: &RepoState, rel: &str) -> Result<(), String> {
+    let cfg = st
+        .config
+        .as_ref()
+        .ok_or("sin .pages.yml: no se puede validar el destino del write")?;
+    let rel_path = Path::new(rel);
+    let in_collection = cfg
+        .content
+        .iter()
+        .any(|c| rel_path.starts_with(Path::new(&c.path)));
+    let in_media = cfg
+        .media
+        .input
+        .as_deref()
+        .is_some_and(|m| rel_path.starts_with(Path::new(m)));
+    if !(in_collection || in_media) {
+        return Err(format!("write fuera de las rutas del config: {rel}"));
+    }
+    Ok(())
+}
+
 /// Escribe la entrada y registra el path en `touched` para que el commit
 /// lo stagee. Devuelve el path relativo escrito.
 pub fn write_entry_tracked(
@@ -89,6 +113,7 @@ pub fn write_entry_tracked(
         other => return Err(format!("front matter: se espera un objeto, llegó {other:?}")),
     };
     let content = serialize_entry(&fm, body)?;
+    ensure_writable(st, path)?;
     let full = safe_join(&st.root, path)?;
     if let Some(parent) = full.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("crear {path}: {e}"))?;
@@ -99,6 +124,63 @@ pub fn write_entry_tracked(
         st.touched.push(rel);
     }
     Ok(path.to_string())
+}
+
+#[derive(Serialize)]
+pub struct NewEntry {
+    pub path: String,
+    pub existed: bool,
+}
+
+/// Resuelve el path de una entrada nueva (`filename` del config o
+/// `{slug}.md`). No escribe nada: si el archivo existe, no se pisa; la
+/// UI lo abre (FLOW.md). El primer Save lo materializa.
+pub fn create_entry_impl(
+    st: &RepoState,
+    collection: &str,
+    slug: &str,
+) -> Result<NewEntry, String> {
+    let cfg = st
+        .config
+        .as_ref()
+        .ok_or("sin .pages.yml: no hay colecciones")?;
+    let item = cfg
+        .content
+        .iter()
+        .find(|c| c.name == collection)
+        .ok_or_else(|| format!("colección desconocida: {collection}"))?;
+    let slug = slug.trim();
+    if slug.is_empty()
+        || !slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(format!("slug inválido: {slug:?} (solo a-z, 0-9 y -)"));
+    }
+    let tpl = item.filename.as_deref().unwrap_or("{slug}.md");
+    let filename = tpl.replace("{slug}", slug);
+    if filename.contains('{') {
+        return Err(format!(
+            "filename con placeholders que v0 no resuelve: {tpl} (solo {{slug}})"
+        ));
+    }
+    let rel = format!("{}/{}", item.path.trim_end_matches('/'), filename);
+    let full = safe_join(&st.root, &rel)?;
+    Ok(NewEntry {
+        path: rel,
+        existed: full.is_file(),
+    })
+}
+
+#[tauri::command]
+pub fn create_entry(
+    state: tauri::State<'_, AppState>,
+    collection: &str,
+    slug: &str,
+) -> Result<NewEntry, String> {
+    let guard = state.lock().unwrap();
+    let st = guard.as_ref().ok_or("no hay repo abierto")?;
+    create_entry_impl(st, collection, slug)
 }
 
 #[tauri::command]
@@ -123,6 +205,19 @@ pub fn write_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::parse_config;
+
+    const CONFIG_YAML: &str = "media:\n  input: src/content/media\n  output: /images\ncontent:\n  - name: blog\n    label: Blog\n    path: src/content/blog\n    fields:\n      - name: title\n        type: string\n";
+
+    fn st_with_config(dir: &Path, yaml: &str) -> RepoState {
+        let repo = git2::Repository::init(dir).unwrap();
+        RepoState {
+            repo,
+            root: dir.to_path_buf(),
+            config: Some(parse_config(yaml).unwrap()),
+            touched: Vec::new(),
+        }
+    }
 
     const SAMPLE: &str = "---\ntitle: Hello world\npubDate: 2026-09-28\ncustom: keep-me\n---\n\nHello body.\n";
 
@@ -171,15 +266,12 @@ mod tests {
     #[test]
     fn write_y_read_vuelven_por_el_mismo_camino() {
         let dir = tempfile::tempdir().unwrap();
-        let repo = git2::Repository::init(dir.path()).unwrap();
-        let mut st = RepoState {
-            repo,
-            root: dir.path().to_path_buf(),
-            touched: Vec::new(),
-        };
-        let fm = serde_yaml_ng::from_str::<Value>("title: Nuevo\npubDate: 2026-10-01\n")
-            .unwrap();
-        let fm = match fm {
+        let mut st = st_with_config(dir.path(), CONFIG_YAML);
+        let fm = match serde_yaml_ng::from_str::<Value>(
+            "title: Nuevo\npubDate: 2026-10-01\n",
+        )
+        .unwrap()
+        {
             Value::Mapping(m) => m,
             _ => unreachable!(),
         };
@@ -198,5 +290,74 @@ mod tests {
         };
         assert_eq!(back_fm.get("title"), Some(&Value::from("Nuevo")));
         assert_eq!(back.body, "cuerpo nuevo\n");
+    }
+
+    #[test]
+    fn write_fuera_del_config_se_rechaza() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = st_with_config(dir.path(), CONFIG_YAML);
+        let fm = Value::Mapping(Mapping::new());
+        // Fuera de src/content/blog y de src/content/media.
+        assert!(write_entry_tracked(&mut st, "README.md", fm.clone(), "x").is_err());
+        assert!(write_entry_tracked(&mut st, "src/other/a.md", fm.clone(), "x").is_err());
+        // Media.input sí es escribible (ahí caen las imágenes, v1).
+        assert!(write_entry_tracked(&mut st, "src/content/media/a.png", fm, "x").is_ok());
+    }
+
+    #[test]
+    fn write_sin_config_se_rechaza() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let mut st = RepoState {
+            repo,
+            root: dir.path().to_path_buf(),
+            config: None,
+            touched: Vec::new(),
+        };
+        let fm = Value::Mapping(Mapping::new());
+        assert!(write_entry_tracked(&mut st, "src/content/blog/a.md", fm, "x").is_err());
+    }
+
+    #[test]
+    fn create_entry_resuelve_filename_y_no_pisa() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = st_with_config(dir.path(), CONFIG_YAML);
+        let n = create_entry_impl(&st, "blog", "mi-post").unwrap();
+        assert_eq!(n.path, "src/content/blog/mi-post.md");
+        assert!(!n.existed);
+
+        // Ya existe: se avisa, no se escribe nada aquí.
+        fs::create_dir_all(dir.path().join("src/content/blog")).unwrap();
+        fs::write(dir.path().join("src/content/blog/mi-post.md"), "previo").unwrap();
+        let n = create_entry_impl(&st, "blog", "mi-post").unwrap();
+        assert!(n.existed);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("src/content/blog/mi-post.md")).unwrap(),
+            "previo"
+        );
+    }
+
+    #[test]
+    fn create_entry_con_filename_del_config() {
+        let yaml = "content:\n  - name: blog\n    path: src/content/blog\n    filename: \"post-{slug}.md\"\n    fields: []\n";
+        let dir = tempfile::tempdir().unwrap();
+        let st = st_with_config(dir.path(), yaml);
+        let n = create_entry_impl(&st, "blog", "x").unwrap();
+        assert_eq!(n.path, "src/content/blog/post-x.md");
+        // Placeholder que v0 no resuelve: error explícito.
+        let yaml = "content:\n  - name: blog\n    path: src/content/blog\n    filename: \"{pubDate}-{slug}.md\"\n    fields: []\n";
+        let st = st_with_config(dir.path(), yaml);
+        assert!(create_entry_impl(&st, "blog", "x").is_err());
+    }
+
+    #[test]
+    fn create_entry_valida_slug() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = st_with_config(dir.path(), CONFIG_YAML);
+        assert!(create_entry_impl(&st, "blog", "Hola").is_err());
+        assert!(create_entry_impl(&st, "blog", "a/b").is_err());
+        assert!(create_entry_impl(&st, "blog", "").is_err());
+        assert!(create_entry_impl(&st, "nope", "ok").is_err());
+        assert!(create_entry_impl(&st, "blog", "ok-2").is_ok());
     }
 }

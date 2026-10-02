@@ -1,5 +1,7 @@
 pub mod commit;
+pub mod config;
 pub mod entry;
+pub mod push;
 pub mod repo;
 pub mod state;
 
@@ -9,13 +11,18 @@ use state::AppState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             repo::open_repo,
+            repo::repo_status,
             repo::list_entries,
+            config::read_config,
             entry::read_entry,
             entry::write_entry,
-            commit::commit
+            entry::create_entry,
+            commit::commit,
+            push::push
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
