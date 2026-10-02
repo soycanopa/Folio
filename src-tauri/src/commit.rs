@@ -113,10 +113,14 @@ mod tests {
         let st = RepoState {
             repo,
             root,
+            config: Some(crate::config::parse_config(CONFIG_YAML).unwrap()),
             touched: Vec::new(),
         };
         (dir, st)
     }
+
+    const CONFIG_YAML: &str =
+        "content:\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: title\n        type: string\n";
 
     fn head_blob(st: &RepoState, path: &str) -> Vec<u8> {
         let head = st.repo.head().unwrap().peel_to_commit().unwrap();
