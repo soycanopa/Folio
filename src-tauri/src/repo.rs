@@ -316,7 +316,6 @@ mod tests {
     #[test]
     fn clone_con_args_vacios_es_error() {
         assert!(clone_into("", "/tmp/x").is_err());
-        let dir = tempfile::tempdir().unwrap();
         assert!(clone_into("url", "").is_err());
     }
 }

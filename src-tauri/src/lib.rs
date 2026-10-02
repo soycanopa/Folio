@@ -2,6 +2,7 @@ pub mod commit;
 pub mod config;
 pub mod entry;
 pub mod file_entry;
+pub mod history;
 pub mod media;
 pub mod push;
 pub mod repo;
@@ -28,6 +29,7 @@ pub fn run() {
             file_entry::write_file_entry,
             media::list_media,
             media::import_media,
+            history::file_history,
             commit::commit,
             push::push
         ])
