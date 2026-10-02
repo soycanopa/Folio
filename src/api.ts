@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ActionContext,
+  Action,
+  ActionRunInfo,
   ConfigSave,
   EntryContent,
   EntryRef,
@@ -74,4 +77,13 @@ export const api = {
     invoke<import("./types").RecentRepo[]>("remove_recent_repo", { path }),
   fileHistory: (path: string) =>
     invoke<import("./types").CommitInfo[]>("file_history", { path }),
+  // Actions: dispatch con claim + corridas (solo remoto).
+  runAction: (action: Action, context: ActionContext, inputs: Record<string, unknown>) =>
+    invoke<ActionRunInfo | null>("run_action", { action, context, inputs }),
+  actionRuns: (workflows: string[], perPage?: number) =>
+    invoke<ActionRunInfo[]>("action_runs", { workflows, perPage: perPage ?? null }),
+  cancelActionRun: (runId: number) =>
+    invoke<void>("cancel_action_run", { runId }),
+  rerunActionRun: (runId: number) =>
+    invoke<void>("rerun_action_run", { runId }),
 };
