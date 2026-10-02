@@ -37,8 +37,9 @@ interface CanvasProps {
   onChange: (l: CanvasLayout) => void;
   onOpenEntry: (path: string) => void;
   onSave: () => void;
-  onCommit: () => void;
-  onPush: () => void;
+  /** Solo local: en remoto cada save publica su commit en la rama. */
+  onCommit?: () => void;
+  onPush?: () => void;
 }
 
 const MIN_ZOOM = 0.3;
@@ -225,24 +226,28 @@ export function Canvas({
                   onClick={() => setMenuOpen(false)}
                 />
                 <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-line bg-panel py-1 text-sm">
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onCommit();
-                    }}
-                    className="block w-full px-3 py-1.5 text-left hover:bg-raised"
-                  >
-                    Commit…
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onPush();
-                    }}
-                    className="block w-full px-3 py-1.5 text-left hover:bg-raised"
-                  >
-                    Push
-                  </button>
+                  {onCommit && (
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onCommit();
+                      }}
+                      className="block w-full px-3 py-1.5 text-left hover:bg-raised"
+                    >
+                      Commit…
+                    </button>
+                  )}
+                  {onPush && (
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onPush();
+                      }}
+                      className="block w-full px-3 py-1.5 text-left hover:bg-raised"
+                    >
+                      Push
+                    </button>
+                  )}
                 </div>
               </>
             )}

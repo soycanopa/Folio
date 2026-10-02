@@ -44,6 +44,27 @@ type View =
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
+// El mensaje de su server al guardar, incluido el aviso de auto-rename.
+function savedMessage(path: string, savedAs: string): string {
+  return savedAs !== path
+    ? `File "${path}" saved successfully but renamed to "${savedAs}" to avoid naming conflict.`
+    : `File "${path}" saved successfully.`;
+}
+
+// sonner tipa toast.promise como Promise | { unwrap } según versión.
+async function toastPromise<T>(
+  p: Promise<T>,
+  msgs: {
+    loading: string;
+    success: (v: T) => string;
+    error: (e: unknown) => string;
+  },
+): Promise<T> {
+  const t = toast.promise(p, msgs);
+  if (t instanceof Promise) return t;
+  return t.unwrap();
+}
+
 const snap = (d: { fm: Record<string, unknown>; body: string }) =>
   JSON.stringify({ fm: d.fm, body: d.body });
 
@@ -79,8 +100,13 @@ export default function App() {
 
   const viewRef = useRef(view);
   viewRef.current = view;
+  const summaryRef = useRef(summary);
+  summaryRef.current = summary;
 
   const refreshStatus = useCallback(() => {
+    // Remoto: cada save publica su commit en la rama; no hay working
+    // tree ni upstream de los que informar.
+    if (summaryRef.current?.mode === "remote") return;
     api.repoStatus().then(setStatus).catch((e) => setMessage(String(e)));
   }, []);
 
@@ -341,36 +367,59 @@ export default function App() {
 
   const save = useCallback(async () => {
     const v = viewRef.current;
+    const remote = summaryRef.current?.mode === "remote";
     if (v.kind === "canvas") {
+      const persist = api.writeFileEntry(
+        canvasPath,
+        canvasLayout as unknown as Record<string, unknown>,
+        "",
+      );
       try {
-        await api.writeFileEntry(
-          canvasPath,
-          canvasLayout as unknown as Record<string, unknown>,
-          "",
-        );
+        // Remoto: Save publica directo en la rama (decisión del dueño);
+        // toast como su entry.tsx ("Saving your file" → mensaje del save).
+        const path = remote
+          ? await toastPromise(persist, {
+              loading: "Saving your file",
+              success: (p: string) => savedMessage(canvasPath, p),
+              error: (e: unknown) => String(e),
+            })
+          : await persist;
         setCanvasSnapshot(JSON.stringify(canvasLayout));
-        refreshStatus();
-        setMessage(`Saved ${canvasPath}`);
+        if (path !== canvasPath) setCanvasPath(path);
+        if (!remote) refreshStatus();
+        else setMessage("");
       } catch (e) {
         setMessage(String(e));
       }
       return;
     }
     if (v.kind !== "entry") return;
+    const persist =
+      v.collection.kind === "file"
+        ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
+        : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
     try {
-      const persist =
-        v.collection.kind === "file"
-          ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
-          : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
-      await persist;
+      const path = remote
+        ? await toastPromise(persist, {
+            loading: "Saving your file",
+            success: (p: string) => savedMessage(v.draft.path, p),
+            error: (e: unknown) => String(e),
+          })
+        : await persist;
       setView({
         kind: "entry",
         collection: v.collection,
-        draft: { ...v.draft, isNew: false, snapshot: snap(v.draft) },
+        // El auto-rename del 422 puede cambiar el path final.
+        draft: { ...v.draft, path, isNew: false, snapshot: snap(v.draft) },
       });
-      refreshStatus();
-      if (v.draft.isNew) await loadRows(v.collection);
-      setMessage(`Saved ${v.draft.path}`);
+      if (remote) {
+        void loadRows(v.collection);
+        setMessage("");
+      } else {
+        refreshStatus();
+        if (v.draft.isNew) await loadRows(v.collection);
+        setMessage(`Saved ${path}`);
+      }
     } catch (e) {
       setMessage(String(e));
     }
@@ -509,6 +558,7 @@ export default function App() {
   }, []);
 
   const push = useCallback(async () => {
+    if (summaryRef.current?.mode === "remote") return;
     try {
       const ok = await confirm("Push the current branch to its upstream?", {
         title: "Folio",
@@ -642,8 +692,8 @@ export default function App() {
               void openEntry(view.collection, path);
             }}
             onSave={() => void save()}
-            onCommit={() => setCommitOpen(true)}
-            onPush={() => void push()}
+            onCommit={summary.mode === "local" ? () => setCommitOpen(true) : undefined}
+            onPush={summary.mode === "local" ? () => void push() : undefined}
           />
         ) : view.kind === "media" ? (
           <MediaView
@@ -658,6 +708,7 @@ export default function App() {
             collection={view.collection}
             draft={view.draft}
             dirty={dirty}
+            remote={summary.mode === "remote"}
             onFmChange={(name, value) =>
               setView((v) =>
                 v.kind === "entry"
@@ -679,15 +730,19 @@ export default function App() {
               )
             }
             onSave={() => void save()}
-            onCommit={() => setCommitOpen(true)}
-            onPush={() => void push()}
+            onCommit={summary.mode === "local" ? () => setCommitOpen(true) : undefined}
+            onPush={summary.mode === "local" ? () => void push() : undefined}
             onRename={async (newName) => {
               const v = viewRef.current;
               if (v.kind !== "entry") return;
               try {
                 const newPath = await api.renameEntry(v.draft.path, newName);
                 refreshStatus();
-                setMessage(`Renamed to ${newName} — commit to apply`);
+                setMessage(
+                  summary.mode === "remote"
+                    ? `Renamed to ${newName}`
+                    : `Renamed to ${newName} — commit to apply`,
+                );
                 await openEntry(v.collection, newPath);
               } catch (e) {
                 setMessage(String(e));
@@ -699,7 +754,11 @@ export default function App() {
               try {
                 await api.deleteEntry(v.draft.path);
                 refreshStatus();
-                setMessage(`Deleted ${v.draft.path} — commit to apply`);
+                setMessage(
+                  summary.mode === "remote"
+                    ? `Deleted ${v.draft.path}`
+                    : `Deleted ${v.draft.path} — commit to apply`,
+                );
                 selectCollection(v.collection);
               } catch (e) {
                 setMessage(String(e));
