@@ -152,11 +152,17 @@ pub async fn list_entries(
     state: tauri::State<'_, AppState>,
     collection: String,
 ) -> Result<Vec<EntryRef>, String> {
-    let ctx = {
+    let (ctx, ext) = {
         let guard = state.lock().unwrap();
         match guard.as_ref().ok_or("no hay proyecto abierto")? {
-            Project::Local(st) => return list_entries_impl(&st.root, &collection),
-            Project::Remote(rs) => crate::remote::remote_ctx(rs),
+            Project::Local(st) => {
+                let ext = owning_extension(st.config.as_ref(), &collection);
+                return list_entries_impl(&st.root, &collection, &ext);
+            }
+            Project::Remote(rs) => {
+                let ext = owning_extension(rs.config.as_ref(), &collection);
+                (crate::remote::remote_ctx(rs), ext)
+            }
         }
     };
     let token = crate::remote::current_token()?;
@@ -164,7 +170,7 @@ pub async fn list_entries(
     let (mut paths, files) = tauri::async_runtime::spawn_blocking(move || {
         let mut paths = Vec::new();
         let mut files = std::collections::HashMap::new();
-        crate::remote::fetch_collection(&t, &c, &dir, &mut paths, &mut files)?;
+        crate::remote::fetch_collection(&t, &c, &dir, &ext, &mut paths, &mut files)?;
         Ok::<_, String>((paths, files))
     })
     .await
@@ -239,13 +245,21 @@ pub fn repo_status(state: tauri::State<'_, AppState>) -> Result<RepoStatus, Stri
     })
 }
 
-fn list_entries_impl(root: &Path, collection: &str) -> Result<Vec<EntryRef>, String> {
+/// Extensión exigida a los archivos de la colección (su schema
+/// derivation); sin config, "md".
+fn owning_extension(cfg: Option<&crate::config::PagesConfig>, path: &str) -> String {
+    cfg.and_then(|c| crate::entry::owning_item(c, path))
+        .map(|i| i.extension.clone())
+        .unwrap_or_else(|| "md".to_string())
+}
+
+fn list_entries_impl(root: &Path, collection: &str, ext: &str) -> Result<Vec<EntryRef>, String> {
     let dir = root.join(collection);
     if !dir.is_dir() {
         return Err(format!("no existe la carpeta de la colección: {collection}"));
     }
     let mut paths: Vec<PathBuf> = Vec::new();
-    collect_markdown(&dir, &mut paths)?;
+    collect_entries(&dir, ext, &mut paths)?;
     paths.sort();
     paths
         .into_iter()
@@ -258,13 +272,16 @@ fn list_entries_impl(root: &Path, collection: &str) -> Result<Vec<EntryRef>, Str
         .collect()
 }
 
-fn collect_markdown(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_entries(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) -> Result<(), String> {
     for entry in fs::read_dir(dir).map_err(|e| format!("leer {dir:?}: {e}"))? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if path.is_dir() {
-            collect_markdown(&path, out)?;
-        } else if path.extension().is_some_and(|e| e == "md") {
+            collect_entries(&path, ext, out)?;
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+        {
             out.push(path);
         }
     }
@@ -293,7 +310,7 @@ mod tests {
     #[test]
     fn lista_solo_md_de_la_coleccion_ordenado() {
         let (_keep, root) = fixture_repo();
-        let entries = list_entries_impl(&root, "src/content/blog").unwrap();
+        let entries = list_entries_impl(&root, "src/content/blog", "md").unwrap();
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(
             paths,
@@ -306,9 +323,27 @@ mod tests {
     }
 
     #[test]
+    fn lista_por_la_extension_del_schema() {
+        // El portfolio real usa .mdx (filename '{primary}.mdx'); el
+        // .md hardcodeado dejaba la tabla vacía.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let blog = root.join("src/content/blog");
+        fs::create_dir_all(&blog).unwrap();
+        fs::write(blog.join("post.mdx"), "---\ntitle: A\n---\n\nbody").unwrap();
+        fs::write(blog.join("viejo.md"), "no es de esta colección").unwrap();
+        let yaml = "content:\n  - name: blog\n    path: src/content/blog\n    filename: '{primary}.mdx'\n    fields: []\n";
+        let cfg = Some(crate::config::parse_config(yaml).unwrap());
+        let entries = list_entries_impl(&root, "src/content/blog", &owning_extension(cfg.as_ref(), "src/content/blog"))
+            .unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/content/blog/post.mdx"]);
+    }
+
+    #[test]
     fn coleccion_inexistente_es_error() {
         let (_keep, root) = fixture_repo();
-        assert!(list_entries_impl(&root, "src/content/nope").is_err());
+        assert!(list_entries_impl(&root, "src/content/nope", "md").is_err());
     }
 
     #[test]

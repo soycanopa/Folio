@@ -241,16 +241,20 @@ pub fn fetch_collection(
     token: &str,
     ctx: &RemoteCtx,
     dir: &str,
+    ext: &str,
     out: &mut Vec<String>,
     files: &mut HashMap<String, RemoteFile>,
 ) -> Result<(), String> {
     let entries =
         gh_api::fetch_tree_dir(token, &ctx.owner, &ctx.repo, &ctx.branch, dir).map_err(gh_error_ui)?;
+    let suffix = format!(".{ext}");
     let mut subdirs = Vec::new();
     for e in entries {
         match e.kind.as_str() {
             "blob" => {
-                if e.path.ends_with(".md") {
+                // Extensión del schema del config (su listado filtra
+                // así; el .md hardcodeado dejaba fuera los .mdx).
+                if e.path.to_lowercase().ends_with(&suffix) {
                     out.push(e.path.clone());
                 }
                 if let Some(obj) = e.object {
@@ -268,7 +272,7 @@ pub fn fetch_collection(
         }
     }
     for sub in subdirs {
-        fetch_collection(token, ctx, &sub, out, files)?;
+        fetch_collection(token, ctx, &sub, ext, out, files)?;
     }
     Ok(())
 }
@@ -586,3 +590,4 @@ mod tests {
         assert_eq!(split_base("sinext"), ("sinext".to_string(), String::new()));
     }
 }
+
