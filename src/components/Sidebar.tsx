@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, CopyPlus, FileJson, FileText, FolderOpen, Image, LayoutGrid, NotebookPen } from "lucide-react";
+import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid, NotebookPen } from "lucide-react";
 import type { ContentItem, RepoStatus, RepoSummary } from "../types";
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ interface SidebarProps {
   onMedia: () => void;
   /** Presente solo si el config tiene la colección del canvas. */
   onCanvas?: () => void;
+  onHome: () => void;
 }
 
 export function Sidebar({
@@ -25,6 +26,7 @@ export function Sidebar({
   onClone,
   onMedia,
   onCanvas,
+  onHome,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const repoName = summary.root.split("/").filter(Boolean).pop() ?? "repo";
@@ -33,9 +35,13 @@ export function Sidebar({
   return (
     <aside className="flex h-full w-56 shrink-0 flex-col bg-panel border-r border-line">
       <div className="relative mx-2 mt-2 flex items-center gap-3 rounded-lg px-3 py-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+        <button
+          onClick={onHome}
+          title="All projects"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground"
+        >
           <NotebookPen size={16} />
-        </span>
+        </button>
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{repoName}</span>
           <span className="block truncate text-xs text-ink-dim">
@@ -72,6 +78,16 @@ export function Sidebar({
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-raised"
               >
                 <CopyPlus size={14} /> Clone from GitHub…
+              </button>
+              <div className="my-1 border-t border-line" />
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onHome();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-raised"
+              >
+                <FolderGit2 size={14} /> All projects…
               </button>
             </div>
           </>

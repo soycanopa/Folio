@@ -5,6 +5,7 @@ pub mod file_entry;
 pub mod history;
 pub mod media;
 pub mod push;
+pub mod recent;
 pub mod repo;
 pub mod state;
 
@@ -32,6 +33,9 @@ pub fn run() {
             media::list_media,
             media::import_media,
             media::delete_media,
+            recent::list_recent_repos,
+            recent::add_recent_repo,
+            recent::remove_recent_repo,
             history::file_history,
             commit::commit,
             push::push

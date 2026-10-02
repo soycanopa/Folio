@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, NotebookPen } from "lucide-react";
 import { api } from "./api";
 import type {
   ContentItem,
@@ -26,11 +25,13 @@ import {
   NewEntryDialog,
 } from "./components/Dialogs";
 import { MediaView } from "./components/Media";
+import { Home } from "./components/Home";
 
 // El canvas (v2) vive en la colección `showcase` del config (PRD.md).
 const CANVAS_NAME = "showcase";
 
 type View =
+  | { kind: "home" }
   | { kind: "empty" }
   | { kind: "media" }
   | { kind: "canvas"; collection: ContentItem }
@@ -44,7 +45,8 @@ export default function App() {
   const [summary, setSummary] = useState<RepoSummary | null>(null);
   const [config, setConfig] = useState<PagesConfig | null>(null);
   const [status, setStatus] = useState<RepoStatus | null>(null);
-  const [view, setView] = useState<View>({ kind: "empty" });
+  const [view, setView] = useState<View>({ kind: "home" });
+  const [recents, setRecents] = useState<{ path: string }[]>([]);
   const [rows, setRows] = useState<EntryRow[]>([]);
   const [message, setMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
@@ -221,7 +223,7 @@ export default function App() {
       try {
         const s = await api.openRepo(path);
         setSummary(s);
-        localStorage.setItem("folio:lastRepo", path);
+        api.addRecentRepo(path).then(setRecents).catch(() => undefined);
         setStatus(null);
         setView({ kind: "empty" });
         setRows([]);
@@ -241,11 +243,21 @@ export default function App() {
     [refreshStatus, selectCollection],
   );
 
-  // Reabrir el último repo (IMPLEMENTATION.md, Fase 1).
+  // El home arranca con los proyectos recientes; la lista vieja de
+  // localStorage migra una única vez al disco del core.
   useEffect(() => {
     const last = localStorage.getItem("folio:lastRepo");
-    if (last) void openRepoFlow(last);
-  }, [openRepoFlow]);
+    api
+      .listRecentRepos()
+      .then(async (list) => {
+        if (last && list.length === 0) {
+          list = await api.addRecentRepo(last);
+          localStorage.removeItem("folio:lastRepo");
+        }
+        setRecents(list);
+      })
+      .catch(() => undefined);
+  }, []);
 
   const openEntry = useCallback(
     async (collection: ContentItem, path: string) => {
@@ -359,6 +371,10 @@ export default function App() {
     else run();
   }, []);
 
+  const goHome = useCallback(() => {
+    guardNav(() => setView({ kind: "home" }));
+  }, [guardNav]);
+
   // Cmd+S guarda (IMPLEMENTATION.md, Fase 1).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -410,23 +426,15 @@ export default function App() {
 
   if (!summary) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4">
-        <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-          <NotebookPen size={24} />
-        </span>
-        <h1 className="text-2xl font-semibold">Folio</h1>
-        <p className="max-w-xs text-center text-sm text-ink-dim">
-          Edit the content of a local repository, like Pages CMS without the
-          cloud.
-        </p>
-        <button
-          onClick={pickFolder}
-          className="mt-2 flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-        >
-          <FolderOpen size={15} /> Open folder…
-        </button>
-        <StatusBar message={message} status={status} config={config} />
-      </div>
+      <Home
+        recents={recents}
+        onOpen={(path) => void openRepoFlow(path)}
+        onRemove={(path) =>
+          api.removeRecentRepo(path).then(setRecents).catch(() => undefined)
+        }
+        onPickFolder={pickFolder}
+        onClone={() => setCloneOpen(true)}
+      />
     );
   }
 
@@ -463,11 +471,22 @@ export default function App() {
               }
             : undefined
         }
+        onHome={goHome}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
         {!config ? (
           <EmptyConfig summary={summary} onPick={pickFolder} />
+        ) : view.kind === "home" ? (
+          <Home
+            recents={recents}
+            onOpen={(path) => void openRepoFlow(path)}
+            onRemove={(path) =>
+              api.removeRecentRepo(path).then(setRecents).catch(() => undefined)
+            }
+            onPickFolder={() => guardNav(() => void pickFolder())}
+            onClone={() => guardNav(() => setCloneOpen(true))}
+          />
         ) : view.kind === "collection" ? (
           <CollectionTable
             collection={view.collection}
