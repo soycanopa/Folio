@@ -1,137 +1,394 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { confirm, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
+import { FolderOpen, NotebookPen } from "lucide-react";
+import { api } from "./api";
+import type { ContentItem, PagesConfig, RepoStatus, RepoSummary } from "./types";
+import { Sidebar } from "./components/Sidebar";
+import { CollectionTable, type EntryRow } from "./components/CollectionTable";
+import { EntryEditor, type Draft } from "./components/EntryEditor";
+import { CommitDialog, NewEntryDialog } from "./components/Dialogs";
 
-// Spike Fase 0: cableado de los comandos del core, sin la piel de
-// Pages CMS (esa llega en Fase 1 con el layout de DESIGN.md).
-type RepoSummary = { root: string; branch: string };
-type EntryRef = { path: string };
-type EntryContent = { frontmatter: Record<string, unknown>; body: string };
+type View =
+  | { kind: "empty" }
+  | { kind: "collection"; collection: ContentItem }
+  | { kind: "entry"; collection: ContentItem; draft: Draft };
 
-const COLLECTION = "src/content/blog";
+const snap = (d: { fm: Record<string, unknown>; body: string }) =>
+  JSON.stringify({ fm: d.fm, body: d.body });
 
-function App() {
-  const [repoPath, setRepoPath] = useState("");
+export default function App() {
   const [summary, setSummary] = useState<RepoSummary | null>(null);
-  const [entries, setEntries] = useState<EntryRef[]>([]);
-  const [entryPath, setEntryPath] = useState<string | null>(null);
-  const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({});
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [config, setConfig] = useState<PagesConfig | null>(null);
+  const [status, setStatus] = useState<RepoStatus | null>(null);
+  const [view, setView] = useState<View>({ kind: "empty" });
+  const [rows, setRows] = useState<EntryRow[]>([]);
   const [message, setMessage] = useState("");
-  const [status, setStatus] = useState("");
+  const [commitOpen, setCommitOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
 
-  async function openRepo() {
+  const viewRef = useRef(view);
+  viewRef.current = view;
+
+  const refreshStatus = useCallback(() => {
+    api.repoStatus().then(setStatus).catch((e) => setMessage(String(e)));
+  }, []);
+
+  const loadRows = useCallback(async (c: ContentItem) => {
     try {
-      const s = await invoke<RepoSummary>("open_repo", { path: repoPath });
-      setSummary(s);
-      const list = await invoke<EntryRef[]>("list_entries", {
-        collection: COLLECTION,
+      const list = await api.listEntries(c.path);
+      const contents = await Promise.all(
+        list.map(async (e) => {
+          const content = await api.readEntry(e.path);
+          return { path: e.path, values: content.frontmatter };
+        }),
+      );
+      setRows(contents);
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
+  const selectCollection = useCallback(
+    (c: ContentItem) => {
+      setView({ kind: "collection", collection: c });
+      loadRows(c);
+    },
+    [loadRows],
+  );
+
+  const openRepoFlow = useCallback(
+    async (path: string) => {
+      try {
+        const s = await api.openRepo(path);
+        setSummary(s);
+        localStorage.setItem("folio:lastRepo", path);
+        setStatus(null);
+        setView({ kind: "empty" });
+        setRows([]);
+        if (!s.has_config) {
+          setConfig(null);
+          return;
+        }
+        const cfg = await api.readConfig();
+        setConfig(cfg);
+        refreshStatus();
+        if (cfg.content.length > 0) selectCollection(cfg.content[0]);
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [refreshStatus, selectCollection],
+  );
+
+  // Reabrir el último repo (IMPLEMENTATION.md, Fase 1).
+  useEffect(() => {
+    const last = localStorage.getItem("folio:lastRepo");
+    if (last) void openRepoFlow(last);
+  }, [openRepoFlow]);
+
+  const openEntry = useCallback(
+    async (collection: ContentItem, path: string) => {
+      try {
+        const content = await api.readEntry(path);
+        setView({
+          kind: "entry",
+          collection,
+          draft: {
+            path,
+            isNew: false,
+            fm: content.frontmatter,
+            body: content.body,
+            snapshot: JSON.stringify({
+              fm: content.frontmatter,
+              body: content.body,
+            }),
+          },
+        });
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [],
+  );
+
+  const createEntry = useCallback(
+    async (collection: ContentItem, title: string, slug: string) => {
+      try {
+        const res = await api.createEntry(collection.name, slug);
+        if (res.existed) {
+          setMessage(`"${slug}" already exists — opening it`);
+          await openEntry(collection, res.path);
+          return;
+        }
+        const fm: Record<string, unknown> = {};
+        for (const f of collection.fields) {
+          if (f.name === "body") continue;
+          if (f.name === "title") fm.title = title;
+          else if (f.type === "date")
+            fm[f.name] = new Date().toISOString().slice(0, 10);
+          else fm[f.name] = "";
+        }
+        // Buffer sucio: el primer Save lo materializa (FLOW.md).
+        setView({
+          kind: "entry",
+          collection,
+          draft: { path: res.path, isNew: true, fm, body: "", snapshot: "" },
+        });
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [openEntry],
+  );
+
+  const dirty =
+    view.kind === "entry" &&
+    snap(view.draft) !== view.draft.snapshot;
+
+  const save = useCallback(async () => {
+    const v = viewRef.current;
+    if (v.kind !== "entry") return;
+    try {
+      await api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
+      setView({
+        kind: "entry",
+        collection: v.collection,
+        draft: { ...v.draft, isNew: false, snapshot: snap(v.draft) },
       });
-      setEntries(list);
-      setEntryPath(null);
-      setStatus(`${s.root} @ ${s.branch} — ${list.length} entradas`);
+      refreshStatus();
+      if (v.draft.isNew) await loadRows(v.collection);
+      setMessage(`Saved ${v.draft.path}`);
     } catch (e) {
-      setStatus(String(e));
+      setMessage(String(e));
     }
-  }
+  }, [loadRows, refreshStatus]);
 
-  async function openEntry(path: string) {
-    try {
-      const entry = await invoke<EntryContent>("read_entry", { path });
-      setEntryPath(path);
-      setFrontmatter(entry.frontmatter);
-      setTitle(String(entry.frontmatter.title ?? ""));
-      setBody(entry.body);
-      setStatus(path);
-    } catch (e) {
-      setStatus(String(e));
-    }
-  }
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
 
-  async function saveEntry() {
-    if (!entryPath) return;
+  // Cmd+S guarda (IMPLEMENTATION.md, Fase 1).
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        void saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Cerrar con buffer sucio avisa (FLOW.md).
+  useEffect(() => {
+    const promise = getCurrentWindow().onCloseRequested(async (event) => {
+      if (!dirtyRef.current) return;
+      event.preventDefault();
+      const saveFirst = await confirm(
+        'There are unsaved changes. Save before closing?',
+        { title: "Folio", kind: "warning" },
+      );
+      if (saveFirst) {
+        await saveRef.current();
+        await getCurrentWindow().close();
+      }
+    });
+    return () => {
+      void promise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  const push = useCallback(async () => {
     try {
-      // Se reenvía el front matter completo: los campos que Folio no
-      // describe (p.ej. `custom`) llegan de vuelta intactos al core.
-      await invoke<string>("write_entry", {
-        path: entryPath,
-        frontmatter: { ...frontmatter, title },
-        body,
+      const ok = await confirm("Push the current branch to its upstream?", {
+        title: "Folio",
       });
-      setStatus(`guardado: ${entryPath}`);
+      if (!ok) return;
+      await api.push();
+      refreshStatus();
+      setMessage("Pushed");
     } catch (e) {
-      setStatus(String(e));
+      setMessage(String(e));
     }
+  }, [refreshStatus]);
+
+  const pickFolder = useCallback(async () => {
+    const selected = await openFolderDialog({
+      directory: true,
+      title: "Open repository folder",
+    });
+    if (typeof selected === "string") await openRepoFlow(selected);
+  }, [openRepoFlow]);
+
+  // ---- render ----
+
+  if (!summary) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4">
+        <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent text-accent-ink">
+          <NotebookPen size={24} />
+        </span>
+        <h1 className="text-2xl font-semibold">Folio</h1>
+        <p className="max-w-xs text-center text-sm text-ink-dim">
+          Edit the content of a local repository, like Pages CMS without the
+          cloud.
+        </p>
+        <button
+          onClick={pickFolder}
+          className="mt-2 flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink"
+        >
+          <FolderOpen size={15} /> Open folder…
+        </button>
+        <StatusBar message={message} status={status} config={config} />
+      </div>
+    );
   }
 
-  async function commit() {
-    try {
-      const oid = await invoke<string>("commit", { message });
-      setStatus(`commit ${oid}`);
-    } catch (e) {
-      setStatus(String(e));
-    }
-  }
+  const currentCollection =
+    view.kind !== "empty" ? view.collection : null;
 
   return (
-    <main className="spike">
-      <h1>Folio — spike Fase 0</h1>
+    <div className="flex h-full">
+      <Sidebar
+        summary={summary}
+        status={status}
+        collections={config?.content ?? []}
+        selected={currentCollection?.name ?? null}
+        onSelect={selectCollection}
+        onOpenRepo={pickFolder}
+      />
 
-      <section>
-        <input
-          placeholder="/ruta/al/repo (p.ej. fixtures/blog ya con git init)"
-          value={repoPath}
-          onChange={(e) => setRepoPath(e.currentTarget.value)}
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        {!config ? (
+          <EmptyConfig summary={summary} onPick={pickFolder} />
+        ) : view.kind === "collection" ? (
+          <CollectionTable
+            collection={view.collection}
+            rows={rows}
+            onOpen={(path) => void openEntry(view.collection, path)}
+            onNew={() => setNewOpen(true)}
+          />
+        ) : view.kind === "entry" ? (
+          <EntryEditor
+            collection={view.collection}
+            draft={view.draft}
+            dirty={dirty}
+            onFmChange={(name, value) =>
+              setView((v) =>
+                v.kind === "entry"
+                  ? {
+                      ...v,
+                      draft: {
+                        ...v.draft,
+                        fm: { ...v.draft.fm, [name]: value },
+                      },
+                    }
+                  : v,
+              )
+            }
+            onBodyChange={(body) =>
+              setView((v) =>
+                v.kind === "entry"
+                  ? { ...v, draft: { ...v.draft, body } }
+                  : v,
+              )
+            }
+            onSave={() => void save()}
+            onCommit={() => setCommitOpen(true)}
+            onPush={() => void push()}
+            onBack={() => selectCollection(view.collection)}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-sm text-ink-dim">
+            Select a collection.
+          </div>
+        )}
+        <StatusBar message={message} status={status} config={config} />
+      </main>
+
+      {commitOpen && view.kind === "entry" && (
+        <CommitDialog
+          defaultMessage={`Folio: update "${String(view.draft.fm.title ?? "")}"`}
+          onClose={() => setCommitOpen(false)}
+          onConfirm={async (msg) => {
+            setCommitOpen(false);
+            try {
+              const oid = await api.commit(msg);
+              refreshStatus();
+              setMessage(`Commit ${oid.slice(0, 8)}`);
+            } catch (e) {
+              setMessage(String(e));
+            }
+          }}
         />
-        <button onClick={openRepo}>Open</button>
-      </section>
-
-      {summary && (
-        <section>
-          <ul>
-            {entries.map((e) => (
-              <li key={e.path}>
-                <button onClick={() => openEntry(e.path)}>{e.path}</button>
-              </li>
-            ))}
-          </ul>
-        </section>
       )}
 
-      {entryPath && (
-        <section>
-          <label>
-            Title
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.currentTarget.value)}
-            />
-          </label>
-          <label>
-            Body
-            <textarea
-              rows={10}
-              value={body}
-              onChange={(e) => setBody(e.currentTarget.value)}
-            />
-          </label>
-          <button onClick={saveEntry}>Save</button>
-        </section>
-      )}
-
-      <section>
-        <input
-          placeholder="commit message"
-          value={message}
-          onChange={(e) => setMessage(e.currentTarget.value)}
+      {newOpen && currentCollection && (
+        <NewEntryDialog
+          collection={currentCollection}
+          onClose={() => setNewOpen(false)}
+          onCreate={(title, slug) => {
+            setNewOpen(false);
+            void createEntry(currentCollection, title, slug);
+          }}
         />
-        <button onClick={commit}>Commit</button>
-      </section>
-
-      <p className="status">{status}</p>
-    </main>
+      )}
+    </div>
   );
 }
 
-export default App;
+function EmptyConfig({
+  summary,
+  onPick,
+}: {
+  summary: RepoSummary;
+  onPick: () => void;
+}) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3">
+      <h1 className="text-lg font-semibold">No content configuration</h1>
+      <p className="max-w-md text-center text-sm text-ink-dim">
+        {summary.config_error ??
+          "This repository has no .pages.yml at its root. Folio reads that file to build its forms, like Pages CMS does."}
+      </p>
+      <button
+        onClick={onPick}
+        className="mt-2 rounded-lg border border-line px-4 py-2 text-sm hover:bg-panel"
+      >
+        Choose another folder
+      </button>
+    </div>
+  );
+}
+
+function StatusBar({
+  message,
+  status,
+  config,
+}: {
+  message: string;
+  status: RepoStatus | null;
+  config: PagesConfig | null;
+}) {
+  return (
+    <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-panel/60 px-4 text-[11px] text-ink-dim">
+      {status && (
+        <>
+          <span>{status.branch}</span>
+          {status.dirty && <span className="text-amber-400">● uncommitted</span>}
+          {status.ahead > 0 && <span>↑{status.ahead} to push</span>}
+          {status.behind > 0 && <span>↓{status.behind} to pull</span>}
+          {!status.has_upstream && <span>no upstream</span>}
+        </>
+      )}
+      {config && config.warnings.length > 0 && (
+        <span title={config.warnings.join("\n")}>
+          ⚠ {config.warnings.length} config warning(s)
+        </span>
+      )}
+      <span className="ml-auto truncate">{message}</span>
+    </footer>
+  );
+}
