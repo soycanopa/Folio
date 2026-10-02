@@ -42,6 +42,14 @@ export const api = {
   listMedia: () => invoke<MediaRef[]>("list_media"),
   importMedia: (src: string) => invoke<MediaRef>("import_media", { src }),
   deleteMedia: (path: string) => invoke<void>("delete_media", { path }),
+  githubLoginStart: () =>
+    invoke<import("./types").DeviceCodeStart>("github_login_start"),
+  githubLoginPoll: (deviceCode: string) =>
+    invoke<import("./types").DevicePoll>("github_login_poll", { deviceCode }),
+  githubSession: () =>
+    invoke<import("./types").GithubUser | null>("github_session"),
+  githubLogout: () => invoke<void>("github_logout"),
+  githubListRepos: () => invoke<import("./types").GhRepo[]>("github_list_repos"),
   listRecentRepos: () =>
     invoke<import("./types").RecentRepo[]>("list_recent_repos"),
   addRecentRepo: (path: string) =>

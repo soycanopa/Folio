@@ -4,6 +4,8 @@ import { confirm, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import type {
   ContentItem,
+  GhRepo,
+  GithubUser,
   MediaRef,
   PagesConfig,
   RecentRepo,
@@ -27,12 +29,14 @@ import {
 } from "./components/Dialogs";
 import { MediaView } from "./components/Media";
 import { Home } from "./components/Home";
+import { SignInScreen } from "./components/SignInScreen";
 
 // El canvas (v2) vive en la colección `showcase` del config (PRD.md).
 const CANVAS_NAME = "showcase";
 
 type View =
   | { kind: "home" }
+  | { kind: "signin" }
   | { kind: "empty" }
   | { kind: "media" }
   | { kind: "canvas"; collection: ContentItem }
@@ -48,6 +52,8 @@ export default function App() {
   const [status, setStatus] = useState<RepoStatus | null>(null);
   const [view, setView] = useState<View>({ kind: "home" });
   const [recents, setRecents] = useState<RecentRepo[]>([]);
+  const [ghSession, setGhSession] = useState<GithubUser | null>(null);
+  const [ghRepos, setGhRepos] = useState<GhRepo[]>([]);
   const [rows, setRows] = useState<EntryRow[]>([]);
   const [message, setMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
@@ -247,6 +253,13 @@ export default function App() {
   // El home arranca con los proyectos recientes; la lista vieja de
   // localStorage migra una única vez al disco del core.
   useEffect(() => {
+    api
+      .githubSession()
+      .then(async (session) => {
+        setGhSession(session);
+        if (session) setGhRepos(await api.githubListRepos());
+      })
+      .catch(() => undefined);
     const last = localStorage.getItem("folio:lastRepo");
     api
       .listRecentRepos()
@@ -376,6 +389,43 @@ export default function App() {
     guardNav(() => setView({ kind: "home" }));
   }, [guardNav]);
 
+  const loadGhRepos = useCallback(async () => {
+    try {
+      setGhRepos(await api.githubListRepos());
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await api.githubLogout();
+      setGhSession(null);
+      setGhRepos([]);
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
+  const handleCloneRepo = useCallback(
+    async (repo: GhRepo) => {
+      try {
+        const name = repo.full_name.split("/").pop() ?? repo.full_name;
+        const dest = await openFolderDialog({
+          directory: true,
+          title: `Choose where to clone ${name}`,
+        });
+        if (typeof dest !== "string") return;
+        const target = `${dest}/${name}`;
+        await api.cloneRepo(repo.clone_url, target);
+        await openRepoFlow(target);
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [openRepoFlow],
+  );
+
   // Cmd+S guarda (IMPLEMENTATION.md, Fase 1).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -425,16 +475,36 @@ export default function App() {
 
   // ---- render ----
 
+  if (view.kind === "signin") {
+    return (
+      <SignInScreen
+        onStart={api.githubLoginStart}
+        onPoll={api.githubLoginPoll}
+        onAuthorized={async () => {
+          const session = await api.githubSession().catch(() => null);
+          setGhSession(session);
+          if (session) await loadGhRepos();
+          setView({ kind: "home" });
+        }}
+      />
+    );
+  }
+
   if (!summary) {
     return (
       <Home
         recents={recents}
+        session={ghSession}
+        repos={ghRepos}
         onOpen={(path) => void openRepoFlow(path)}
         onRemove={(path) =>
           api.removeRecentRepo(path).then(setRecents).catch(() => undefined)
         }
         onPickFolder={pickFolder}
         onClone={() => setCloneOpen(true)}
+        onCloneRepo={(r) => void handleCloneRepo(r)}
+        onSignIn={() => setView({ kind: "signin" })}
+        onSignOut={() => void handleSignOut()}
       />
     );
   }
@@ -481,12 +551,17 @@ export default function App() {
         ) : view.kind === "home" ? (
           <Home
             recents={recents}
+            session={ghSession}
+            repos={ghRepos}
             onOpen={(path) => void openRepoFlow(path)}
             onRemove={(path) =>
               api.removeRecentRepo(path).then(setRecents).catch(() => undefined)
             }
             onPickFolder={() => guardNav(() => void pickFolder())}
             onClone={() => guardNav(() => setCloneOpen(true))}
+            onCloneRepo={(r) => void handleCloneRepo(r)}
+            onSignIn={() => setView({ kind: "signin" })}
+            onSignOut={() => void handleSignOut()}
           />
         ) : view.kind === "collection" ? (
           <CollectionTable

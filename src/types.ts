@@ -86,6 +86,35 @@ export interface NewEntry {
   existed: boolean;
 }
 
+export interface DeviceCodeStart {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+}
+
+export type DevicePoll =
+  | { status: "pending" }
+  | { status: "slow_down" }
+  | { status: "authorized"; access_token: string }
+  | { status: "denied" }
+  | { status: "expired" };
+
+export interface GithubUser {
+  login: string;
+}
+
+export interface GhRepo {
+  full_name: string;
+  owner: string;
+  private: boolean;
+  /** Unix seconds de updatedAt. */
+  updated_at: number;
+  default_branch: string;
+  clone_url: string;
+}
+
 export interface RecentRepo {
   path: string;
   /** Unix seconds de la última apertura; 0 si el registro es viejo. */
