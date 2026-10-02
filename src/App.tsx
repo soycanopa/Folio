@@ -982,7 +982,7 @@ function StatusBar({
 }) {
   const remote = summary.mode === "remote";
   return (
-    <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-panel/60 px-4 text-[11px] text-ink-dim">
+    <footer className="flex h-7 shrink-0 items-center gap-4 rounded-lg border border-line bg-panel/60 px-4 text-[11px] text-ink-dim">
       {remote ? (
         <>
           <span className="text-ink">{summary.branch}</span>
