@@ -11,6 +11,10 @@ pub const FIELD_TYPES_V0: [&str; 5] = ["string", "text", "date", "image", "rich-
 pub struct Media {
     pub input: Option<String>,
     pub output: Option<String>,
+    /// `false`/ausente → None (conserva el nombre). `"safe"` slugifica,
+    /// `"random"` genera nombre. Booleano true se trata como safe, como
+    /// hace Pages CMS en su `lib/utils/file.ts`.
+    pub rename: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -30,12 +34,16 @@ pub struct Field {
     pub help: Option<String>,
 }
 
-/// Solo colecciones (`type: collection`): `type: file` llega en v1 y
-/// `type: group` queda fuera; ambos se avisan y se ignoran.
+/// Colecciones (`type: collection`) y archivos únicos (`type: file`),
+/// que abren el formulario directo sin tabla. `type: group` queda
+/// fuera; se avisa y se ignora.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct ContentItem {
     pub name: String,
+    /// "collection" | "file".
+    pub kind: String,
     pub label: String,
+    /// Carpeta de la colección o archivo único del `type: file`.
     pub path: String,
     pub filename: Option<String>,
     pub fields: Vec<Field>,
@@ -55,16 +63,32 @@ fn get_str(m: &Mapping, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn parse_rename(v: Option<&Value>, warnings: &mut Vec<String>) -> Option<String> {
+    match v {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some("safe".to_string()),
+        Some(Value::String(s)) if s == "safe" || s == "random" => Some(s.clone()),
+        Some(other) => {
+            warnings.push(format!(
+                "media.rename no reconocido: {other:?}; se slugifica (safe)"
+            ));
+            Some("safe".to_string())
+        }
+    }
+}
+
 fn parse_media(v: Option<&Value>, warnings: &mut Vec<String>) -> Media {
     let empty = Media {
         input: None,
         output: None,
+        rename: None,
     };
     match v {
         None | Some(Value::Null) => empty,
         Some(Value::Mapping(m)) => Media {
             input: get_str(m, "input"),
             output: get_str(m, "output"),
+            rename: parse_rename(m.get("rename"), warnings),
         },
         Some(Value::Sequence(seq)) => {
             warnings.push(
@@ -74,6 +98,7 @@ fn parse_media(v: Option<&Value>, warnings: &mut Vec<String>) -> Media {
                 Some(m) => Media {
                     input: get_str(m, "input"),
                     output: get_str(m, "output"),
+                    rename: parse_rename(m.get("rename"), warnings),
                 },
                 None => empty,
             }
@@ -149,13 +174,9 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
                     warnings.push("content: ítem sin name; ignorado".to_string());
                     continue;
                 };
-                match get_str(m, "type").as_deref() {
-                    None | Some("collection") => {}
-                    Some("file") => {
-                        warnings
-                            .push(format!("content {name}: type file llega en v1; ignorado"));
-                        continue;
-                    }
+                let kind = match get_str(m, "type").as_deref() {
+                    None | Some("collection") => "collection",
+                    Some("file") => "file",
                     Some("group") => {
                         warnings.push(format!(
                             "content {name}: type group sin soporte aún; ignorado"
@@ -169,6 +190,7 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
                         continue;
                     }
                 }
+                .to_string();
                 let Some(path) = get_str(m, "path") else {
                     warnings.push(format!("content {name}: colección sin path; ignorada"));
                     continue;
@@ -191,6 +213,7 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
                 });
                 content.push(ContentItem {
                     name,
+                    kind,
                     label,
                     path,
                     filename: get_str(m, "filename"),
@@ -247,11 +270,14 @@ mod tests {
     }
 
     #[test]
-    fn tipo_file_y_group_se_avisan_y_se_ignoran() {
-        let raw = "content:\n  - name: hero\n    label: Hero\n    type: file\n    path: src/hero.json\n    fields: []\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: title\n";
+    fn tipo_file_se_parsea_y_group_sigue_ignorado() {
+        let raw = "content:\n  - name: hero\n    label: Hero\n    type: file\n    path: src/content/hero.json\n    fields:\n      - name: heading\n        type: string\n  - name: grupo\n    type: group\n    path: x\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: title\n";
         let cfg = parse_config(raw).unwrap();
-        assert_eq!(cfg.content.len(), 1);
-        assert!(cfg.warnings.iter().any(|w| w.contains("hero") && w.contains("file")));
+        assert_eq!(cfg.content.len(), 2);
+        assert_eq!(cfg.content[0].kind, "file");
+        assert_eq!(cfg.content[0].path, "src/content/hero.json");
+        assert_eq!(cfg.content[1].kind, "collection");
+        assert!(cfg.warnings.iter().any(|w| w.contains("grupo") && w.contains("group")));
     }
 
     #[test]

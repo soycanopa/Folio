@@ -3,14 +3,22 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, NotebookPen } from "lucide-react";
 import { api } from "./api";
-import type { ContentItem, PagesConfig, RepoStatus, RepoSummary } from "./types";
+import type {
+  ContentItem,
+  MediaRef,
+  PagesConfig,
+  RepoStatus,
+  RepoSummary,
+} from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { CollectionTable, type EntryRow } from "./components/CollectionTable";
 import { EntryEditor, type Draft } from "./components/EntryEditor";
-import { CommitDialog, NewEntryDialog } from "./components/Dialogs";
+import { CloneDialog, CommitDialog, NewEntryDialog } from "./components/Dialogs";
+import { MediaView } from "./components/Media";
 
 type View =
   | { kind: "empty" }
+  | { kind: "media" }
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
@@ -26,6 +34,8 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [mediaItems, setMediaItems] = useState<MediaRef[]>([]);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -49,12 +59,75 @@ export default function App() {
     }
   }, []);
 
+  const loadMedia = useCallback(async () => {
+    try {
+      const items = await api.listMedia();
+      setMediaItems(items);
+    } catch {
+      // Sin media.input declarado no hay librería; la UI lo explica.
+      setMediaItems([]);
+    }
+  }, []);
+
+  const uploadMedia = useCallback(async (): Promise<MediaRef | null> => {
+    try {
+      const files = await openFolderDialog({
+        multiple: true,
+        title: "Choose images",
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"] }],
+      });
+      if (!Array.isArray(files) || files.length === 0) return null;
+      let last: MediaRef | null = null;
+      for (const f of files) {
+        last = await api.importMedia(f);
+      }
+      await loadMedia();
+      setMessage(`Imported ${files.length} file(s)`);
+      return last;
+    } catch (e) {
+      setMessage(String(e));
+      return null;
+    }
+  }, [loadMedia]);
+
   const selectCollection = useCallback(
     (c: ContentItem) => {
       setView({ kind: "collection", collection: c });
       loadRows(c);
     },
     [loadRows],
+  );
+
+  // Un `type: file` no tiene tabla: el ítem del sidebar abre su
+  // formulario directo (UI.md).
+  const openFileEntry = useCallback(async (item: ContentItem) => {
+    try {
+      const content = await api.readFileEntry(item.path);
+      setView({
+        kind: "entry",
+        collection: item,
+        draft: {
+          path: item.path,
+          isNew: false,
+          fm: content.frontmatter,
+          body: content.body,
+          snapshot: JSON.stringify({
+            fm: content.frontmatter,
+            body: content.body,
+          }),
+        },
+      });
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
+  const selectItem = useCallback(
+    (c: ContentItem) => {
+      if (c.kind === "file") void openFileEntry(c);
+      else selectCollection(c);
+    },
+    [openFileEntry, selectCollection],
   );
 
   const openRepoFlow = useCallback(
@@ -73,6 +146,7 @@ export default function App() {
         const cfg = await api.readConfig();
         setConfig(cfg);
         refreshStatus();
+        void loadMedia();
         if (cfg.content.length > 0) selectCollection(cfg.content[0]);
       } catch (e) {
         setMessage(String(e));
@@ -150,7 +224,11 @@ export default function App() {
     const v = viewRef.current;
     if (v.kind !== "entry") return;
     try {
-      await api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
+      const persist =
+        v.collection.kind === "file"
+          ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
+          : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
+      await persist;
       setView({
         kind: "entry",
         collection: v.collection,
@@ -247,7 +325,9 @@ export default function App() {
   }
 
   const currentCollection =
-    view.kind !== "empty" ? view.collection : null;
+    view.kind === "collection" || view.kind === "entry"
+      ? view.collection
+      : null;
 
   return (
     <div className="flex h-full">
@@ -255,9 +335,18 @@ export default function App() {
         summary={summary}
         status={status}
         collections={config?.content ?? []}
-        selected={currentCollection?.name ?? null}
-        onSelect={selectCollection}
+        selected={
+          view.kind === "media"
+            ? "__media__"
+            : currentCollection?.name ?? null
+        }
+        onSelect={selectItem}
         onOpenRepo={pickFolder}
+        onClone={() => setCloneOpen(true)}
+        onMedia={() => {
+          setView({ kind: "media" });
+          void loadMedia();
+        }}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
@@ -269,6 +358,13 @@ export default function App() {
             rows={rows}
             onOpen={(path) => void openEntry(view.collection, path)}
             onNew={() => setNewOpen(true)}
+          />
+        ) : view.kind === "media" ? (
+          <MediaView
+            root={summary.root}
+            items={mediaItems}
+            hasMediaInput={Boolean(config?.media.input)}
+            onUpload={() => void uploadMedia()}
           />
         ) : view.kind === "entry" ? (
           <EntryEditor
@@ -298,6 +394,11 @@ export default function App() {
             onSave={() => void save()}
             onCommit={() => setCommitOpen(true)}
             onPush={() => void push()}
+            showBack={view.collection.kind === "collection"}
+            root={summary.root}
+            mediaInput={config?.media.input ?? null}
+            mediaItems={mediaItems}
+            onUploadMedia={uploadMedia}
             onBack={() => selectCollection(view.collection)}
           />
         ) : (
@@ -318,6 +419,21 @@ export default function App() {
               const oid = await api.commit(msg);
               refreshStatus();
               setMessage(`Commit ${oid.slice(0, 8)}`);
+            } catch (e) {
+              setMessage(String(e));
+            }
+          }}
+        />
+      )}
+
+      {cloneOpen && (
+        <CloneDialog
+          onClose={() => setCloneOpen(false)}
+          onClone={async (url, dest) => {
+            setCloneOpen(false);
+            try {
+              await api.cloneRepo(url, dest);
+              await openRepoFlow(dest);
             } catch (e) {
               setMessage(String(e));
             }

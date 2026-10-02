@@ -2,6 +2,15 @@
 export interface Media {
   input?: string | null;
   output?: string | null;
+  /** false/ausente → conserva nombre; "safe" | "random". */
+  rename?: string | null;
+}
+
+export interface MediaRef {
+  path: string;
+  name: string;
+  /** Ruta pública (media.output + nombre) para el front matter. */
+  public_path: string;
 }
 
 export interface Field {
@@ -20,6 +29,8 @@ export interface ViewCfg {
 
 export interface ContentItem {
   name: string;
+  /** "collection" | "file". */
+  kind: string;
   label: string;
   path: string;
   filename?: string | null;
@@ -60,4 +71,14 @@ export interface EntryContent {
 export interface NewEntry {
   path: string;
   existed: boolean;
+}
+
+export interface CommitInfo {
+  oid: string;
+  message: string;
+  author: string;
+  /** Unix seconds. */
+  time: number;
+  /** true si no llegó al upstream. */
+  local: boolean;
 }

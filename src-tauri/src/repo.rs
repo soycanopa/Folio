@@ -47,7 +47,26 @@ fn load_config(root: &Path) -> (Option<PagesConfig>, Option<String>) {
 }
 
 #[tauri::command]
-pub fn open_repo(state: tauri::State<'_, AppState>, path: &str) -> Result<RepoSummary, String> {
+pub fn open_repo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: &str,
+) -> Result<RepoSummary, String> {
+    let summary = open_repo_at(&state, path)?;
+    allow_asset_scope(&app, &summary.root)?;
+    Ok(summary)
+}
+
+/// El webview muestra miniaturas vía `convertFileSrc`; el scope del
+/// asset protocol se amplía al repo abierto, nada más.
+fn allow_asset_scope(app: &tauri::AppHandle, root: &str) -> Result<(), String> {
+    use tauri::Manager;
+    app.asset_protocol_scope()
+        .allow_directory(root, true)
+        .map_err(|e| format!("asset scope: {e}"))
+}
+
+fn open_repo_at(state: &AppState, path: &str) -> Result<RepoSummary, String> {
     let repo = git2::Repository::open(path).map_err(|e| format!("no es un repo git: {e}"))?;
     let root = repo
         .workdir()
@@ -72,6 +91,35 @@ pub fn open_repo(state: tauri::State<'_, AppState>, path: &str) -> Result<RepoSu
         touched: Vec::new(),
     });
     Ok(summary)
+}
+
+/// Clona con el `git` del sistema (credenciales de la máquina) y deja
+/// el resultado abierto, igual que `open_repo`.
+#[tauri::command]
+pub fn clone_repo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    url: &str,
+    dest: &str,
+) -> Result<RepoSummary, String> {
+    clone_into(url, dest)?;
+    let summary = open_repo_at(&state, dest)?;
+    allow_asset_scope(&app, &summary.root)?;
+    Ok(summary)
+}
+
+pub fn clone_into(url: &str, dest: &str) -> Result<(), String> {
+    if url.trim().is_empty() || dest.trim().is_empty() {
+        return Err("URL y carpeta destino son obligatorias".to_string());
+    }
+    let out = std::process::Command::new("git")
+        .args(["clone", url, dest])
+        .output()
+        .map_err(|e| format!("ejecutar git: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(())
 }
 
 /// `collection` es el `path` de la colección bajo la raíz (p.ej.
@@ -222,5 +270,52 @@ mod tests {
         fs::write(dir.path().join(".pages.yml"), "content: [").unwrap();
         let (cfg, err) = load_config(dir.path());
         assert!(cfg.is_none() && err.is_some());
+    }
+
+    #[test]
+    fn clona_y_abre_un_repo_local() {
+        // Fuente: un bare local con un commit (git del sistema, sin red).
+        let src = tempfile::tempdir().unwrap();
+        git2::Repository::init_bare(src.path()).unwrap();
+        let work = tempfile::tempdir().unwrap();
+        git2::Repository::init(work.path()).unwrap();
+        {
+            let repo = git2::Repository::open(work.path()).unwrap();
+            fs::write(work.path().join("a.md"), "x").unwrap();
+            let mut index = repo.index().unwrap();
+            index.add_path(Path::new("a.md")).unwrap();
+            let tree_oid = index.write_tree().unwrap();
+            index.write().unwrap();
+            let tree = repo.find_tree(tree_oid).unwrap();
+            let sig = git2::Signature::now("T", "t@t").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        let out = std::process::Command::new("git")
+            .args([
+                "push",
+                src.path().to_str().unwrap(),
+                "HEAD:main",
+            ])
+            .current_dir(work.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{:?}", out.stderr);
+
+        let dest_dir = tempfile::tempdir().unwrap();
+        let dest = dest_dir.path().join("clon");
+        clone_into(src.path().to_str().unwrap(), dest.to_str().unwrap()).unwrap();
+
+        let state: crate::state::AppState = std::sync::Mutex::new(None);
+        let summary = open_repo_at(&state, dest.to_str().unwrap()).unwrap();
+        assert!(dest.join(".git").exists());
+        assert!(!summary.has_config);
+        assert!(state.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn clone_con_args_vacios_es_error() {
+        assert!(clone_into("", "/tmp/x").is_err());
+        assert!(clone_into("url", "").is_err());
     }
 }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import type { ContentItem } from "../types";
 
 function Modal({
@@ -66,6 +67,75 @@ export function CommitDialog({
           </button>
           <button type="submit" disabled={!message.trim()} className={btnPrimary}>
             Commit
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+export function CloneDialog({
+  onClose,
+  onClone,
+}: {
+  onClose: () => void;
+  onClone: (url: string, dest: string) => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [dest, setDest] = useState("");
+  return (
+    <Modal title="Clone from GitHub" onClose={onClose}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (url.trim() && dest) onClone(url.trim(), dest);
+        }}
+        className="flex flex-col gap-3"
+      >
+        <label className="flex flex-col gap-1.5 text-sm">
+          Repository URL
+          <input
+            autoFocus
+            value={url}
+            onChange={(e) => setUrl(e.currentTarget.value)}
+            placeholder="https://github.com/user/repo.git"
+            className={inputCls}
+          />
+        </label>
+        <label className="flex flex-col gap-1.5 text-sm">
+          Destination
+          <span className="flex items-center gap-2">
+            <input
+              readOnly
+              value={dest}
+              placeholder="Choose a folder…"
+              className={inputCls}
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const d = await openFolderDialog({
+                  directory: true,
+                  title: "Choose destination folder",
+                });
+                if (typeof d === "string") setDest(d);
+              }}
+              className="shrink-0 rounded-lg border border-line px-3 py-1.5 text-sm hover:bg-raised"
+            >
+              Browse…
+            </button>
+          </span>
+        </label>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className={btnGhost}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!url.trim() || !dest}
+            className={btnPrimary}
+          >
+            Clone
           </button>
         </div>
       </form>
