@@ -14,6 +14,7 @@ import { relTime } from "../lib/time";
 import { resolveMediaSrc } from "../lib/media-src";
 import { FieldInput } from "./FieldInput";
 import { MediaPickerDialog } from "./Media";
+import { ActionRunButton } from "./actions/ActionRunButton";
 
 // TipTap es el grueso del bundle: se carga al entrar a un formulario.
 const RichText = lazy(() =>
@@ -158,6 +159,27 @@ export function EntryEditor({
         </span>
 
         <div className="ml-auto flex items-center gap-1.5">
+          {/* Actions con scope entry (o sin scope en los type: file), como
+              su entry.tsx. */}
+          {(collection.actions ?? [])
+            .filter((a) =>
+              collection.kind === "file" ? a.scope == null : a.scope === "entry",
+            )
+            .map((a) => (
+              <ActionRunButton
+                key={a.name}
+                action={a}
+                context={{
+                  type: "entry",
+                  name: collection.name,
+                  path: draft.path,
+                  data: {
+                    label: collection.label,
+                    entryName: draft.path.split("/").pop() ?? draft.path,
+                  },
+                }}
+              />
+            ))}
           <div className="relative">
             <button
               onClick={() => void toggleHistory()}

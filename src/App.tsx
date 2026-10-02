@@ -29,6 +29,7 @@ import {
 } from "./components/Dialogs";
 import { MediaView } from "./components/Media";
 import { ConfigurationEditor } from "./components/ConfigurationEditor";
+import { ActionsPage } from "./components/actions/ActionsPage";
 import { HomePage } from "./components/home/home-page";
 import { getVisits, trackVisit } from "./lib/tracker";
 import { toast } from "sonner";
@@ -43,6 +44,7 @@ type View =
   | { kind: "empty" }
   | { kind: "media" }
   | { kind: "configuration" }
+  | { kind: "actions" }
   | { kind: "canvas"; collection: ContentItem }
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
@@ -525,6 +527,11 @@ export default function App() {
     });
   }, [guardNav, report]);
 
+  // Página Actions: solo remoto (los workflows viven en GitHub).
+  const openActions = useCallback(() => {
+    guardNav(() => setView({ kind: "actions" }));
+  }, [guardNav]);
+
 
 
   const handleSignOut = useCallback(async () => {
@@ -738,9 +745,14 @@ export default function App() {
             ? "__media__"
             : view.kind === "configuration"
               ? "__config__"
-              : currentCollection?.name ?? null
+              : view.kind === "actions"
+                ? "__actions__"
+                : currentCollection?.name ?? null
         }
         onConfiguration={openConfiguration}
+        onActions={
+          summary.mode === "remote" ? openActions : undefined
+        }
         onSelect={(c) => guardNav(() => selectItem(c))}
         onOpenRepo={() => guardNav(() => void pickFolder())}
         onClone={() => guardNav(() => setCloneOpen(true))}
@@ -775,6 +787,13 @@ export default function App() {
             busy={saving}
             onChange={setConfigRaw}
             onSave={() => void save()}
+          />
+        ) : view.kind === "actions" ? (
+          <ActionsPage
+            actions={[
+              ...(config?.actions ?? []),
+              ...(config?.content.flatMap((c) => c.actions) ?? []),
+            ]}
           />
         ) : view.kind === "collection" ? (
           <CollectionTable

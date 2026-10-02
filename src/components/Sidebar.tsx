@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid, Settings } from "lucide-react";
+import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid, ListVideo, Settings } from "lucide-react";
 import { PagesMark } from "./PagesMark";
 import type { ContentItem, GithubUser, RepoStatus, RepoSummary } from "../types";
 
@@ -18,6 +18,8 @@ interface SidebarProps {
   onCanvas?: () => void;
   /** Su grupo Admin: el editor del .pages.yml existente. */
   onConfiguration: () => void;
+  /** Página Actions: presente solo en remoto (los workflows viven en GitHub). */
+  onActions?: () => void;
   onHome: () => void;
 }
 
@@ -33,6 +35,7 @@ export function Sidebar({
   onMedia,
   onCanvas,
   onConfiguration,
+  onActions,
   onHome,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -163,11 +166,22 @@ export function Sidebar({
           <span className="truncate">Media</span>
         </button>
 
-        {/* Su renderFlatGroup("Admin") (repo-sidebar.tsx): por ahora solo
-           Configuration — Actions remoto entra en su propia fase. */}
+        {/* Su renderFlatGroup("Admin") (repo-sidebar.tsx): Actions solo
+           en remoto; Collaborators/Cache quedan fuera (sin server). */}
         <p className="px-2 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
           Admin
         </p>
+        {onActions && (
+          <button
+            onClick={onActions}
+            className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
+              selected === "__actions__" ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/40"
+            }`}
+          >
+            <ListVideo size={15} className="shrink-0 text-ink-dim" />
+            <span className="truncate">Actions</span>
+          </button>
+        )}
         <button
           onClick={onConfiguration}
           className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
