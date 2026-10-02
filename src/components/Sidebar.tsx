@@ -38,7 +38,7 @@ export function Sidebar({
 
   return (
     <aside
-      data-tauri-drag-region
+      data-tauri-drag-region="deep"
       className="flex h-full w-56 shrink-0 flex-col bg-panel border-r border-line pt-7"
     >
       <div className="relative mx-2 mt-2 flex items-center gap-3 rounded-lg px-3 py-3">
