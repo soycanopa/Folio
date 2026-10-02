@@ -190,7 +190,7 @@ fn security(args: &[&str]) -> Result<String, String> {
 pub fn save_session(session: &GithubSession) -> Result<(), String> {
     let json = serde_json::to_string(session).map_err(|e| e.to_string())?;
     let exe = exe_path()?;
-    security(&[
+    let mut args = vec![
         "add-generic-password",
         "-U",
         "-s",
@@ -201,7 +201,16 @@ pub fn save_session(session: &GithubSession) -> Result<(), String> {
         &json,
         "-T",
         &exe,
-    ])?;
+    ];
+    // Dev: la firma ad-hoc del binario cambia en cada rebuild y macOS
+    // deja de reconocerlo en el ACL del item → pide la clave del
+    // keychain en cada arranque. `-A` evita el prompt a costa de
+    // dejar el item legible por cualquier app (tradeoff aceptado por
+    // el dueño 2026-10-02); release mantiene el ACL por binario.
+    if cfg!(debug_assertions) {
+        args.push("-A");
+    }
+    security(&args)?;
     *SESSION_CACHE.lock().unwrap() = Some(Some(session.clone()));
     Ok(())
 }
