@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// Client ID de la OAuth App de GitHub de Folio (no es secreto; el
 /// Device Flow no usa client secret). El dueño crea la app en
 /// github.com/settings/developers y pega el client_id aquí.
-const OAUTH_CLIENT_ID: &str = "";
+const OAUTH_CLIENT_ID: &str = "Ov23lihU4sxEzYa1fFkb";
 const KEYCHAIN_SERVICE: &str = "folio";
 const KEYCHAIN_ACCOUNT: &str = "github-session";
 
