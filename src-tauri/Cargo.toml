@@ -27,6 +27,8 @@ git2 = { version = "0.21", default-features = false }
 # Fork mantenido de serde_yaml (archivado por dtolnay).
 serde_yaml_ng = "0.10"
 tauri-plugin-dialog = "2.8.1"
+ureq = { version = "3.4.2", features = ["json"] }
+keyring = { version = "4.2.0", features = ["apple-native-keyring-store"] }
 
 [dev-dependencies]
 tempfile = "3"

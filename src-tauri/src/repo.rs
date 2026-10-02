@@ -112,8 +112,11 @@ pub fn clone_into(url: &str, dest: &str) -> Result<(), String> {
     if url.trim().is_empty() || dest.trim().is_empty() {
         return Err("URL y carpeta destino son obligatorias".to_string());
     }
-    let out = std::process::Command::new("git")
-        .args(["clone", url, dest])
+    // Con sesión de GitHub, el clone usa el token vía environment del
+    // credential helper; sin sesión, las credenciales del sistema.
+    let mut cmd = crate::github::clone_command(url, dest);
+
+    let out = cmd
         .output()
         .map_err(|e| format!("ejecutar git: {e}"))?;
     if !out.status.success() {

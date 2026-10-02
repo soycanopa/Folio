@@ -2,6 +2,7 @@ pub mod commit;
 pub mod config;
 pub mod entry;
 pub mod file_entry;
+pub mod github;
 pub mod history;
 pub mod media;
 pub mod push;
@@ -33,6 +34,11 @@ pub fn run() {
             media::list_media,
             media::import_media,
             media::delete_media,
+            github::github_login_start,
+            github::github_login_poll,
+            github::github_session,
+            github::github_logout,
+            github::github_list_repos,
             recent::list_recent_repos,
             recent::add_recent_repo,
             recent::remove_recent_repo,
