@@ -744,6 +744,16 @@ export default function App() {
             dirty={dirty}
             remote={summary.mode === "remote"}
             busy={saving}
+            seeAllChangesUrl={
+              summary.owner_repo
+                ? `https://github.com/${summary.owner_repo}/commits/${encodeURIComponent(
+                    summary.branch,
+                  )}/${view.draft.path
+                    .split("/")
+                    .map(encodeURIComponent)
+                    .join("/")}`
+                : undefined
+            }
             onFmChange={(name, value) =>
               setView((v) =>
                 v.kind === "entry"
