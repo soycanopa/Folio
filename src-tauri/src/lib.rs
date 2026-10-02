@@ -39,6 +39,7 @@ pub fn run() {
             github::github_session,
             github::github_logout,
             github::github_list_repos,
+            github::github_create_from_template,
             recent::list_recent_repos,
             recent::add_recent_repo,
             recent::remove_recent_repo,
