@@ -190,6 +190,93 @@ pub fn decode_content(b64: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("base64: {e}"))
 }
 
+// ---- actions (workflow_dispatch) ----
+
+/// Una corrida de GitHub Actions, recortada a lo que la UI muestra.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct GhActionRun {
+    pub id: i64,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
+    pub head_sha: Option<String>,
+    #[serde(default)]
+    pub head_branch: Option<String>,
+    #[serde(default)]
+    pub event: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub run_started_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WorkflowRuns {
+    #[serde(default)]
+    workflow_runs: Vec<GhActionRun>,
+}
+
+/// POST `.../actions/workflows/{workflow}/dispatches` — 204 sin body.
+/// `workflow` es el filename (el `workflow_id` acepta filename).
+pub fn dispatch_workflow(
+    token: &str,
+    owner: &str,
+    repo: &str,
+    workflow: &str,
+    dispatch_ref: &str,
+    inputs: &Value,
+) -> Result<(), GhError> {
+    let url = format!("{API}/repos/{owner}/{repo}/actions/workflows/{workflow}/dispatches");
+    call_json(
+        agent().post(url),
+        token,
+        json!({ "ref": dispatch_ref, "inputs": inputs }),
+    )?;
+    Ok(())
+}
+
+/// Corridas de un workflow en una rama (`branch` filtra como su
+/// `listWorkflowRuns`; paginación manual con `page`).
+pub fn list_workflow_runs(
+    token: &str,
+    owner: &str,
+    repo: &str,
+    workflow: &str,
+    branch: &str,
+    per_page: u32,
+    page: u32,
+) -> Result<Vec<GhActionRun>, GhError> {
+    let url = format!("{API}/repos/{owner}/{repo}/actions/workflows/{workflow}/runs");
+    let req = agent()
+        .get(url)
+        .query("branch", branch)
+        .query("per_page", per_page.to_string())
+        .query("page", page.to_string());
+    Ok(read_json::<WorkflowRuns>(call(req, token)?)?.workflow_runs)
+}
+
+pub fn get_workflow_run(token: &str, owner: &str, repo: &str, run_id: i64) -> Result<GhActionRun, GhError> {
+    get_json(token, format!("{API}/repos/{owner}/{repo}/actions/runs/{run_id}"))
+}
+
+pub fn cancel_workflow_run(token: &str, owner: &str, repo: &str, run_id: i64) -> Result<(), GhError> {
+    let url = format!("{API}/repos/{owner}/{repo}/actions/runs/{run_id}/cancel");
+    call_json(agent().post(url), token, json!({}))?;
+    Ok(())
+}
+
+pub fn rerun_workflow_run(token: &str, owner: &str, repo: &str, run_id: i64) -> Result<(), GhError> {
+    let url = format!("{API}/repos/{owner}/{repo}/actions/runs/{run_id}/rerun");
+    call_json(agent().post(url), token, json!({}))?;
+    Ok(())
+}
+
 // ---- repo / contents ----
 
 #[derive(Deserialize, Clone, Debug, PartialEq)]
@@ -785,6 +872,37 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parsea_corridas_de_workflow() {
+        let raw = r#"{
+            "total_count": 2,
+            "workflow_runs": [
+                {
+                    "id": 1234,
+                    "status": "completed",
+                    "conclusion": "success",
+                    "html_url": "https://github.com/o/r/actions/runs/1234",
+                    "head_sha": "abc1234567890abcdef1234567890abcdef1234",
+                    "head_branch": "main",
+                    "event": "workflow_dispatch",
+                    "created_at": "2026-10-02T19:33:23Z",
+                    "updated_at": "2026-10-02T19:35:01Z",
+                    "run_started_at": "2026-10-02T19:33:24Z"
+                },
+                { "id": 1233, "status": "in_progress" }
+            ]
+        }"#;
+        let runs: Vec<GhActionRun> = serde_json::from_str::<WorkflowRuns>(raw)
+            .unwrap()
+            .workflow_runs;
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].conclusion.as_deref(), Some("success"));
+        assert_eq!(runs[0].event.as_deref(), Some("workflow_dispatch"));
+        // Campos ausentes → None (defaults), nunca crash.
+        assert_eq!(runs[1].conclusion, None);
+        assert_eq!(runs[1].created_at, None);
+    }
 
     #[test]
     fn parsea_archivo_de_contents() {
