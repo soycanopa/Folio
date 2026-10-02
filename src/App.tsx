@@ -7,7 +7,7 @@ import type { ContentItem, PagesConfig, RepoStatus, RepoSummary } from "./types"
 import { Sidebar } from "./components/Sidebar";
 import { CollectionTable, type EntryRow } from "./components/CollectionTable";
 import { EntryEditor, type Draft } from "./components/EntryEditor";
-import { CommitDialog, NewEntryDialog } from "./components/Dialogs";
+import { CloneDialog, CommitDialog, NewEntryDialog } from "./components/Dialogs";
 
 type View =
   | { kind: "empty" }
@@ -26,6 +26,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -55,6 +56,38 @@ export default function App() {
       loadRows(c);
     },
     [loadRows],
+  );
+
+  // Un `type: file` no tiene tabla: el ítem del sidebar abre su
+  // formulario directo (UI.md).
+  const openFileEntry = useCallback(async (item: ContentItem) => {
+    try {
+      const content = await api.readFileEntry(item.path);
+      setView({
+        kind: "entry",
+        collection: item,
+        draft: {
+          path: item.path,
+          isNew: false,
+          fm: content.frontmatter,
+          body: content.body,
+          snapshot: JSON.stringify({
+            fm: content.frontmatter,
+            body: content.body,
+          }),
+        },
+      });
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
+  const selectItem = useCallback(
+    (c: ContentItem) => {
+      if (c.kind === "file") void openFileEntry(c);
+      else selectCollection(c);
+    },
+    [openFileEntry, selectCollection],
   );
 
   const openRepoFlow = useCallback(
@@ -150,7 +183,11 @@ export default function App() {
     const v = viewRef.current;
     if (v.kind !== "entry") return;
     try {
-      await api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
+      const persist =
+        v.collection.kind === "file"
+          ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
+          : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
+      await persist;
       setView({
         kind: "entry",
         collection: v.collection,
@@ -256,8 +293,9 @@ export default function App() {
         status={status}
         collections={config?.content ?? []}
         selected={currentCollection?.name ?? null}
-        onSelect={selectCollection}
+        onSelect={selectItem}
         onOpenRepo={pickFolder}
+        onClone={() => setCloneOpen(true)}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
@@ -298,6 +336,7 @@ export default function App() {
             onSave={() => void save()}
             onCommit={() => setCommitOpen(true)}
             onPush={() => void push()}
+            showBack={view.collection.kind === "collection"}
             onBack={() => selectCollection(view.collection)}
           />
         ) : (
@@ -318,6 +357,21 @@ export default function App() {
               const oid = await api.commit(msg);
               refreshStatus();
               setMessage(`Commit ${oid.slice(0, 8)}`);
+            } catch (e) {
+              setMessage(String(e));
+            }
+          }}
+        />
+      )}
+
+      {cloneOpen && (
+        <CloneDialog
+          onClose={() => setCloneOpen(false)}
+          onClone={async (url, dest) => {
+            setCloneOpen(false);
+            try {
+              await api.cloneRepo(url, dest);
+              await openRepoFlow(dest);
             } catch (e) {
               setMessage(String(e));
             }

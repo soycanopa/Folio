@@ -16,6 +16,8 @@ interface EntryEditorProps {
   collection: ContentItem;
   draft: Draft;
   dirty: boolean;
+  /** false para `type: file`: misma barra, sin breadcrumb de lista (UI.md). */
+  showBack: boolean;
   onFmChange: (name: string, value: unknown) => void;
   onBodyChange: (body: string) => void;
   onSave: () => void;
@@ -28,6 +30,7 @@ export function EntryEditor({
   collection,
   draft,
   dirty,
+  showBack,
   onFmChange,
   onBodyChange,
   onSave,
@@ -45,13 +48,15 @@ export function EntryEditor({
   return (
     <div className="flex h-full flex-col">
       <header className="relative flex items-center gap-2 px-6 py-4">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1 text-sm text-ink-dim hover:text-ink"
-        >
-          {collection.label}
-          <ChevronRight size={14} />
-        </button>
+        {showBack && (
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1 text-sm text-ink-dim hover:text-ink"
+          >
+            {collection.label}
+            <ChevronRight size={14} />
+          </button>
+        )}
         <span className="truncate text-sm">
           Editing &ldquo;{title || draft.path}&rdquo;
         </span>

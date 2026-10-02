@@ -20,6 +20,8 @@ export interface ViewCfg {
 
 export interface ContentItem {
   name: string;
+  /** "collection" | "file". */
+  kind: string;
   label: string;
   path: string;
   filename?: string | null;
