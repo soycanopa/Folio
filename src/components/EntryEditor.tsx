@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { ChevronRight, Clock, MoreHorizontal, Upload } from "lucide-react";
 import type { CommitInfo, ContentItem, MediaRef } from "../types";
 import { api } from "../api";
 import { FieldInput } from "./FieldInput";
-import { RichText } from "./RichText";
 import { MediaPickerDialog } from "./Media";
+
+// TipTap es el grueso del bundle: se carga al entrar a un formulario.
+const RichText = lazy(() =>
+  import("./RichText").then((m) => ({ default: m.RichText })),
+);
 
 export interface Draft {
   path: string;
@@ -261,11 +265,17 @@ export function EntryEditor({
                   </button>
                 </div>
               </div>
-              <RichText
-                value={draft.body}
-                onChange={onBodyChange}
-                sourceMode={sourceMode}
-              />
+              <Suspense
+                fallback={
+                  <div className="min-h-[240px] rounded-lg bg-panel" />
+                }
+              >
+                <RichText
+                  value={draft.body}
+                  onChange={onBodyChange}
+                  sourceMode={sourceMode}
+                />
+              </Suspense>
               {bodyField.help && (
                 <p className="text-xs text-ink-dim">{bodyField.help}</p>
               )}
