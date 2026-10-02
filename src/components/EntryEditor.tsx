@@ -142,7 +142,9 @@ export function EntryEditor({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="relative flex items-center gap-2 px-6 py-4">
+      <header
+          data-tauri-drag-region
+          className="relative flex items-center gap-2 px-6 py-4">
         {showBack && (
           <button
             onClick={onBack}
