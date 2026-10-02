@@ -47,8 +47,23 @@ fn load_config(root: &Path) -> (Option<PagesConfig>, Option<String>) {
 }
 
 #[tauri::command]
-pub fn open_repo(state: tauri::State<'_, AppState>, path: &str) -> Result<RepoSummary, String> {
-    open_repo_at(&state, path)
+pub fn open_repo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: &str,
+) -> Result<RepoSummary, String> {
+    let summary = open_repo_at(&state, path)?;
+    allow_asset_scope(&app, &summary.root)?;
+    Ok(summary)
+}
+
+/// El webview muestra miniaturas vía `convertFileSrc`; el scope del
+/// asset protocol se amplía al repo abierto, nada más.
+fn allow_asset_scope(app: &tauri::AppHandle, root: &str) -> Result<(), String> {
+    use tauri::Manager;
+    app.asset_protocol_scope()
+        .allow_directory(root, true)
+        .map_err(|e| format!("asset scope: {e}"))
 }
 
 fn open_repo_at(state: &AppState, path: &str) -> Result<RepoSummary, String> {
@@ -82,12 +97,15 @@ fn open_repo_at(state: &AppState, path: &str) -> Result<RepoSummary, String> {
 /// el resultado abierto, igual que `open_repo`.
 #[tauri::command]
 pub fn clone_repo(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     url: &str,
     dest: &str,
 ) -> Result<RepoSummary, String> {
     clone_into(url, dest)?;
-    open_repo_at(&state, dest)
+    let summary = open_repo_at(&state, dest)?;
+    allow_asset_scope(&app, &summary.root)?;
+    Ok(summary)
 }
 
 pub fn clone_into(url: &str, dest: &str) -> Result<(), String> {

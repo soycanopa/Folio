@@ -11,6 +11,10 @@ pub const FIELD_TYPES_V0: [&str; 5] = ["string", "text", "date", "image", "rich-
 pub struct Media {
     pub input: Option<String>,
     pub output: Option<String>,
+    /// `false`/ausente → None (conserva el nombre). `"safe"` slugifica,
+    /// `"random"` genera nombre. Booleano true se trata como safe, como
+    /// hace Pages CMS en su `lib/utils/file.ts`.
+    pub rename: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -59,16 +63,32 @@ fn get_str(m: &Mapping, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn parse_rename(v: Option<&Value>, warnings: &mut Vec<String>) -> Option<String> {
+    match v {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some("safe".to_string()),
+        Some(Value::String(s)) if s == "safe" || s == "random" => Some(s.clone()),
+        Some(other) => {
+            warnings.push(format!(
+                "media.rename no reconocido: {other:?}; se slugifica (safe)"
+            ));
+            Some("safe".to_string())
+        }
+    }
+}
+
 fn parse_media(v: Option<&Value>, warnings: &mut Vec<String>) -> Media {
     let empty = Media {
         input: None,
         output: None,
+        rename: None,
     };
     match v {
         None | Some(Value::Null) => empty,
         Some(Value::Mapping(m)) => Media {
             input: get_str(m, "input"),
             output: get_str(m, "output"),
+            rename: parse_rename(m.get("rename"), warnings),
         },
         Some(Value::Sequence(seq)) => {
             warnings.push(
@@ -78,6 +98,7 @@ fn parse_media(v: Option<&Value>, warnings: &mut Vec<String>) -> Media {
                 Some(m) => Media {
                     input: get_str(m, "input"),
                     output: get_str(m, "output"),
+                    rename: parse_rename(m.get("rename"), warnings),
                 },
                 None => empty,
             }
