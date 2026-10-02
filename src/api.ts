@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ConfigSave,
   EntryContent,
   EntryRef,
   MediaRef,
@@ -22,6 +23,10 @@ export const api = {
     invoke<MediaSrc>("remote_media_url", { path }),
   repoStatus: () => invoke<RepoStatus>("repo_status"),
   readConfig: () => invoke<PagesConfig>("read_config"),
+  // Editor Configuration: texto crudo del .pages.yml existente.
+  readConfigRaw: () => invoke<string>("read_config_raw"),
+  validateConfig: (raw: string) => invoke<void>("validate_config", { raw }),
+  writeConfig: (raw: string) => invoke<ConfigSave>("write_config", { raw }),
   listEntries: (collection: string) =>
     invoke<EntryRef[]>("list_entries", { collection }),
   readEntry: (path: string) => invoke<EntryContent>("read_entry", { path }),

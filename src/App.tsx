@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import type {
+  ConfigSave,
   ContentItem,
   GithubUser,
   MediaRef,
@@ -27,6 +28,7 @@ import {
   OpenModeDialog,
 } from "./components/Dialogs";
 import { MediaView } from "./components/Media";
+import { ConfigurationEditor } from "./components/ConfigurationEditor";
 import { HomePage } from "./components/home/home-page";
 import { getVisits, trackVisit } from "./lib/tracker";
 import { toast } from "sonner";
@@ -40,6 +42,7 @@ type View =
   | { kind: "signin" }
   | { kind: "empty" }
   | { kind: "media" }
+  | { kind: "configuration" }
   | { kind: "canvas"; collection: ContentItem }
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
@@ -97,6 +100,9 @@ export default function App() {
   const [canvasLayout, setCanvasLayout] = useState<CanvasLayout | null>(null);
   const [canvasSnapshot, setCanvasSnapshot] = useState("");
   const [canvasReturn, setCanvasReturn] = useState(false);
+  // Editor Configuration: texto crudo + snapshot para el dirty (patrón canvas).
+  const [configRaw, setConfigRaw] = useState("");
+  const [configSnapshot, setConfigSnapshot] = useState("");
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -386,7 +392,9 @@ export default function App() {
     view.kind === "canvas" &&
     canvasLayout !== null &&
     JSON.stringify(canvasLayout) !== canvasSnapshot;
-  const dirty = entryDirty || canvasDirty;
+  const configDirty =
+    view.kind === "configuration" && configRaw !== configSnapshot;
+  const dirty = entryDirty || canvasDirty || configDirty;
   // Como su isBusy: mientras publica no se dispara otro save (un doble
   // Cmd+S en remoto publicaría dos commits).
   const [saving, setSaving] = useState(false);
@@ -422,6 +430,27 @@ export default function App() {
         else setMessage("");
         return;
       }
+      if (v.kind === "configuration") {
+        // Su /configuration: guardar = escribir el .pages.yml. Remoto
+        // publica directo (toast como su entry); local queda tracked para
+        // el commit. La config que devuelve el core re-arma el sidebar.
+        const persist = api.writeConfig(configRaw);
+        const res = remote
+          ? await toastPromise(persist, {
+              loading: "Saving your file",
+              success: (r: ConfigSave) => savedMessage(".pages.yml", r.path),
+              error: (e: unknown) => String(e),
+            })
+          : await persist;
+        setConfig(res.config);
+        setConfigSnapshot(configRaw);
+        if (remote) setMessage("");
+        else {
+          refreshStatus();
+          setMessage("Saved .pages.yml — commit to apply");
+        }
+        return;
+      }
       if (v.kind !== "entry") return;
       const persist =
         v.collection.kind === "file"
@@ -454,7 +483,7 @@ export default function App() {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [canvasLayout, canvasPath, loadRows, refreshStatus]);
+  }, [canvasLayout, canvasPath, configRaw, loadRows, refreshStatus]);
 
   const saveRef = useRef(save);
   saveRef.current = save;
@@ -480,6 +509,21 @@ export default function App() {
       setView({ kind: "home" });
     });
   }, [guardNav]);
+
+  // Su página /configuration: abre el .pages.yml existente en el editor.
+  // No hay creación de config (decisión del dueño, 2026-10-02).
+  const openConfiguration = useCallback(() => {
+    guardNav(async () => {
+      try {
+        const raw = await api.readConfigRaw();
+        setConfigRaw(raw);
+        setConfigSnapshot(raw);
+        setView({ kind: "configuration" });
+      } catch (e) {
+        report(e);
+      }
+    });
+  }, [guardNav, report]);
 
 
 
@@ -692,8 +736,11 @@ export default function App() {
         selected={
           view.kind === "media"
             ? "__media__"
-            : currentCollection?.name ?? null
+            : view.kind === "configuration"
+              ? "__config__"
+              : currentCollection?.name ?? null
         }
+        onConfiguration={openConfiguration}
         onSelect={(c) => guardNav(() => selectItem(c))}
         onOpenRepo={() => guardNav(() => void pickFolder())}
         onClone={() => guardNav(() => setCloneOpen(true))}
@@ -720,6 +767,14 @@ export default function App() {
             summary={summary}
             remote={summary.mode === "remote"}
             onPick={summary.mode === "remote" ? goHome : pickFolder}
+          />
+        ) : view.kind === "configuration" ? (
+          <ConfigurationEditor
+            raw={configRaw}
+            dirty={configDirty}
+            busy={saving}
+            onChange={setConfigRaw}
+            onSave={() => void save()}
           />
         ) : view.kind === "collection" ? (
           <CollectionTable

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid } from "lucide-react";
+import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid, Settings } from "lucide-react";
 import { PagesMark } from "./PagesMark";
 import type { ContentItem, GithubUser, RepoStatus, RepoSummary } from "../types";
 
@@ -16,6 +16,8 @@ interface SidebarProps {
   onMedia: () => void;
   /** Presente solo si el config tiene la colección del canvas. */
   onCanvas?: () => void;
+  /** Su grupo Admin: el editor del .pages.yml existente. */
+  onConfiguration: () => void;
   onHome: () => void;
 }
 
@@ -30,6 +32,7 @@ export function Sidebar({
   onClone,
   onMedia,
   onCanvas,
+  onConfiguration,
   onHome,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -158,6 +161,21 @@ export function Sidebar({
         >
           <Image size={15} className="shrink-0 text-ink-dim" />
           <span className="truncate">Media</span>
+        </button>
+
+        {/* Su renderFlatGroup("Admin") (repo-sidebar.tsx): por ahora solo
+           Configuration — Actions remoto entra en su propia fase. */}
+        <p className="px-2 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
+          Admin
+        </p>
+        <button
+          onClick={onConfiguration}
+          className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
+            selected === "__config__" ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/40"
+          }`}
+        >
+          <Settings size={15} className="shrink-0 text-ink-dim" />
+          <span className="truncate">Configuration</span>
         </button>
       </nav>
 
