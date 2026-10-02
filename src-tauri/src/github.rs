@@ -259,6 +259,23 @@ pub fn list_repos(token: &str) -> Result<Vec<GhRepo>, String> {
         .collect())
 }
 
+/// Su "Copy template": crea una copia del repo template en la cuenta
+/// del usuario (GitHub API generate, token personal; su server hacía
+/// lo mismo con la GitHub App).
+pub fn create_from_template(token: &str, template_full: &str, name: &str) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct RawCreated {
+        full_name: String,
+    }
+    let created: RawCreated = post_json(
+        &format!(
+            "https://api.github.com/repos/{template_full}/generate"
+        ),
+        serde_json::json!({ "name": name }),
+    )?;
+    Ok(created.full_name)
+}
+
 // ---- Clone con token ----
 
 /// Si hay sesión y la URL es de GitHub, clona con el token entregado al
@@ -317,6 +334,15 @@ pub fn github_logout() -> Result<(), String> {
 pub fn github_list_repos() -> Result<Vec<GhRepo>, String> {
     let session = load_session()?.ok_or("sin sesión de GitHub")?;
     list_repos(&session.token)
+}
+
+#[tauri::command]
+pub fn github_create_from_template(
+    template: &str,
+    name: &str,
+) -> Result<String, String> {
+    let session = load_session()?.ok_or("sin sesión de GitHub")?;
+    create_from_template(&session.token, template, name)
 }
 
 #[cfg(test)]

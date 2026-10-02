@@ -52,8 +52,13 @@ export const api = {
   githubListRepos: () => invoke<import("./types").GhRepo[]>("github_list_repos"),
   listRecentRepos: () =>
     invoke<import("./types").RecentRepo[]>("list_recent_repos"),
-  addRecentRepo: (path: string) =>
-    invoke<import("./types").RecentRepo[]>("add_recent_repo", { path }),
+  addRecentRepo: (path: string, ownerRepo?: string) =>
+    invoke<import("./types").RecentRepo[]>("add_recent_repo", {
+      path,
+      ownerRepo: ownerRepo ?? null,
+    }),
+  githubCreateFromTemplate: (template: string, name: string) =>
+    invoke<string>("github_create_from_template", { template, name }),
   removeRecentRepo: (path: string) =>
     invoke<import("./types").RecentRepo[]>("remove_recent_repo", { path }),
   fileHistory: (path: string) =>

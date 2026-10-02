@@ -418,12 +418,29 @@ export default function App() {
         if (typeof dest !== "string") return;
         const target = `${dest}/${name}`;
         await api.cloneRepo(repo.clone_url, target);
+        await api
+          .addRecentRepo(target, repo.full_name)
+          .then(setRecents)
+          .catch(() => undefined);
         await openRepoFlow(target);
       } catch (e) {
         setMessage(String(e));
       }
     },
     [openRepoFlow],
+  );
+
+  const handleCreateTemplate = useCallback(
+    async (template: string, name: string) => {
+      try {
+        const fullName = await api.githubCreateFromTemplate(template, name);
+        setMessage(`Created ${fullName}`);
+        await loadGhRepos();
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [loadGhRepos],
   );
 
   // Cmd+S guarda (IMPLEMENTATION.md, Fase 1).
@@ -505,6 +522,7 @@ export default function App() {
         onCloneRepo={(r) => void handleCloneRepo(r)}
         onSignIn={() => setView({ kind: "signin" })}
         onSignOut={() => void handleSignOut()}
+        onCreateTemplate={(t, n) => void handleCreateTemplate(t, n)}
       />
     );
   }
@@ -562,6 +580,9 @@ export default function App() {
             onCloneRepo={(r) => void handleCloneRepo(r)}
             onSignIn={() => setView({ kind: "signin" })}
             onSignOut={() => void handleSignOut()}
+            onCreateTemplate={(t, n) =>
+              guardNav(() => void handleCreateTemplate(t, n))
+            }
           />
         ) : view.kind === "collection" ? (
           <CollectionTable

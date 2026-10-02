@@ -119,6 +119,8 @@ export interface RecentRepo {
   path: string;
   /** Unix seconds de la última apertura; 0 si el registro es viejo. */
   last_open: number;
+  /** owner/repo si el proyecto vino de GitHub. */
+  owner_repo?: string | null;
 }
 
 export interface CommitInfo {
