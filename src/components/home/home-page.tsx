@@ -97,8 +97,7 @@ export function HomePage({
             <div className="w-full max-w-[340px] space-y-6 rounded-2xl border border-line bg-panel p-8 text-left shadow-2xl">
               <FolioBrand />
               <p className="text-center text-sm text-muted-foreground">
-                Sign in with GitHub to open your repositories, like on the
-                Pages CMS platform.
+                Sign in with GitHub to open your repositories.
               </p>
               <button
                 onClick={onSignIn}
