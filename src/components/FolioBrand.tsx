@@ -13,7 +13,7 @@ export function FolioBrand() {
             "drop-shadow(0 6px 16px color-mix(in oklch, var(--color-primary) 45%, transparent))",
         }}
       >
-        <PagesMark size={44} />
+        <PagesMark size={56} />
       </div>
       <h1 className="text-center text-xl font-semibold tracking-tight">
         Folio
