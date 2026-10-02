@@ -6,7 +6,7 @@ use std::{
 use serde::Serialize;
 use serde_yaml_ng::{Mapping, Value};
 
-use crate::state::{AppState, RepoState};
+use crate::state::{AppState, Project, RepoState};
 
 #[derive(Serialize)]
 pub struct EntryContent {
@@ -179,8 +179,10 @@ pub fn create_entry(
     slug: &str,
 ) -> Result<NewEntry, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    create_entry_impl(st, collection, slug)
+    match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => create_entry_impl(st, collection, slug),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 /// Colección que contiene a `path`, según los paths del config.
@@ -267,22 +269,28 @@ pub fn rename_entry(
     new_name: &str,
 ) -> Result<String, String> {
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    rename_entry_impl(st, path, new_name)
+    match guard.as_mut().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => rename_entry_impl(st, path, new_name),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[tauri::command]
 pub fn delete_entry(state: tauri::State<'_, AppState>, path: &str) -> Result<(), String> {
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    delete_entry_impl(st, path)
+    match guard.as_mut().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => delete_entry_impl(st, path),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[tauri::command]
 pub fn read_entry(state: tauri::State<'_, AppState>, path: &str) -> Result<EntryContent, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    read_entry_at(&st.root, path)
+    match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => read_entry_at(&st.root, path),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -293,8 +301,10 @@ pub fn write_entry(
     body: &str,
 ) -> Result<String, String> {
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    write_entry_tracked(st, path, frontmatter, body)
+    match guard.as_mut().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => write_entry_tracked(st, path, frontmatter, body),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[cfg(test)]

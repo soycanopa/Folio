@@ -4,7 +4,7 @@ use serde_yaml_ng::Value;
 
 use crate::{
     entry::{ensure_writable, read_entry_at, safe_join, write_entry_tracked, EntryContent},
-    state::{AppState, RepoState},
+    state::{AppState, Project, RepoState},
 };
 
 // Entradas `type: file` del config: un único archivo sin tabla.
@@ -76,8 +76,10 @@ pub fn read_file_entry(
     path: &str,
 ) -> Result<EntryContent, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    read_file_entry_at(&st.root, path)
+    match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => read_file_entry_at(&st.root, path),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -88,8 +90,10 @@ pub fn write_file_entry(
     body: &str,
 ) -> Result<String, String> {
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    write_file_entry_tracked(st, path, frontmatter, body)
+    match guard.as_mut().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => write_file_entry_tracked(st, path, frontmatter, body),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[cfg(test)]

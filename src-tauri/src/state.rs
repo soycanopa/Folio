@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
 use crate::config::PagesConfig;
 
@@ -12,4 +12,28 @@ pub struct RepoState {
     pub touched: Vec<PathBuf>,
 }
 
-pub type AppState = Mutex<Option<RepoState>>;
+/// Proyecto remoto: se edita contra la API de GitHub sin clonar. La
+/// caché `files` guarda el contenido y el `sha` con el que se cargó
+/// cada path — el PUT lo exige y su 409 detecta cambios ajenos.
+pub struct RemoteState {
+    pub owner: String,
+    pub repo: String,
+    pub branch: String,
+    pub is_public: bool,
+    pub config: Option<PagesConfig>,
+    pub files: HashMap<String, RemoteFile>,
+}
+
+pub struct RemoteFile {
+    pub sha: String,
+    pub text: String,
+}
+
+/// Un proyecto abierto a la vez: local (git2 + working dir) o remoto
+/// (API de GitHub). Los comandos dispatchean sobre este enum.
+pub enum Project {
+    Local(RepoState),
+    Remote(RemoteState),
+}
+
+pub type AppState = Mutex<Option<Project>>;

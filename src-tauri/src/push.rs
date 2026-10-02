@@ -1,6 +1,6 @@
 use std::{path::Path, process::Command};
 
-use crate::state::AppState;
+use crate::state::{AppState, Project};
 
 /// Push de la rama actual con el `git` del sistema, para que use las
 /// credenciales ya configuradas de la máquina (TRD.md). Si no hay
@@ -51,9 +51,18 @@ pub fn push(state: tauri::State<'_, AppState>) -> Result<(), String> {
     // y tardar; no bloquea la UI con el estado del repo.
     let root = {
         let guard = state.lock().unwrap();
-        let st = guard.as_ref().ok_or("no hay repo abierto")?;
-        ensure_upstream(&st.repo)?;
-        st.root.clone()
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => {
+                ensure_upstream(&st.repo)?;
+                st.root.clone()
+            }
+            Project::Remote(_) => {
+                return Err(
+                    "push es de proyectos locales; en remoto cada save publica su commit en la rama"
+                        .to_string(),
+                )
+            }
+        }
     };
     run_git_push(&root)
 }

@@ -50,11 +50,55 @@ pub struct Media {
     pub rename: Option<String>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
 pub struct View {
     pub fields: Vec<String>,
     pub sort: Option<String>,
     pub order: Option<String>,
+}
+
+/// Plantillas de commit por acción, como su `lib/commit-message.ts`.
+/// Solo cuentan las strings no vacías; el resto cae al default en el
+/// resolve.
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct CommitTemplates {
+    pub create: Option<String>,
+    pub update: Option<String>,
+    pub delete: Option<String>,
+    pub rename: Option<String>,
+}
+
+#[derive(Serialize, Clone, Debug, Default, PartialEq)]
+pub struct Settings {
+    /// `settings.commit.templates`. `identity` no se parsea: Folio no
+    /// tiene GitHub App, el commit remoto firma siempre con el
+    /// usuario del token (divergencia en third_party/NOTICE).
+    pub commit_templates: CommitTemplates,
+}
+
+fn parse_commit_templates(
+    v: Option<&Value>,
+    warnings: &mut Vec<String>,
+    ctx: &str,
+) -> Option<CommitTemplates> {
+    let m = v?.as_mapping()?;
+    let mut out = CommitTemplates::default();
+    for key in ["create", "update", "delete", "rename"] {
+        match m.get(key) {
+            Some(Value::String(s)) if !s.trim().is_empty() => match key {
+                "create" => out.create = Some(s.clone()),
+                "update" => out.update = Some(s.clone()),
+                "delete" => out.delete = Some(s.clone()),
+                _ => out.rename = Some(s.clone()),
+            },
+            Some(Value::String(_)) => {}
+            Some(other) => warnings.push(format!(
+                "{ctx}: commit.templates.{key} no es string; se ignora ({other:?})"
+            )),
+            None => {}
+        }
+    }
+    Some(out)
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -86,6 +130,8 @@ pub struct ContentItem {
     pub operations: Operations,
     /// Label del `type: group` que lo contiene, si está agrupado.
     pub group: Option<String>,
+    /// `commit.templates` del ítem (su `schemaCommitTemplates`).
+    pub commit_templates: Option<CommitTemplates>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -93,6 +139,7 @@ pub struct PagesConfig {
     pub media: Media,
     pub content: Vec<ContentItem>,
     pub warnings: Vec<String>,
+    pub settings: Settings,
 }
 
 fn get_str(m: &Mapping, key: &str) -> Option<String> {
@@ -213,6 +260,19 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
 
     let media = parse_media(root_map.get("media"), &mut warnings);
 
+    let settings = Settings {
+        commit_templates: parse_commit_templates(
+            root_map
+                .get("settings")
+                .and_then(Value::as_mapping)
+                .and_then(|s| s.get("commit"))
+                .and_then(|c| c.get("templates")),
+            &mut warnings,
+            "settings",
+        )
+        .unwrap_or_default(),
+    };
+
     let mut content = Vec::new();
     match root_map.get("content") {
         Some(Value::Sequence(items)) => {
@@ -225,6 +285,7 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
         media,
         content,
         warnings,
+        settings,
     })
 }
 
@@ -294,6 +355,11 @@ fn parse_content_items(
             sort: get_str(vm, "sort"),
             order: get_str(vm, "order"),
         });
+        let commit_templates = parse_commit_templates(
+            m.get("commit").and_then(|c| c.get("templates")),
+            warnings,
+            &format!("content {name}"),
+        );
         out.push(ContentItem {
             name,
             kind: kind.clone(),
@@ -304,6 +370,7 @@ fn parse_content_items(
             view,
             operations: resolve_operations(&kind, m),
             group: group.map(str::to_string),
+            commit_templates,
         });
     }
 }
@@ -311,10 +378,16 @@ fn parse_content_items(
 #[tauri::command]
 pub fn read_config(state: tauri::State<'_, AppState>) -> Result<PagesConfig, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    st.config
-        .clone()
-        .ok_or_else(|| "sin .pages.yml en la raíz del repo".to_string())
+    match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        crate::state::Project::Local(st) => st
+            .config
+            .clone()
+            .ok_or_else(|| "sin .pages.yml en la raíz del repo".to_string()),
+        crate::state::Project::Remote(st) => st
+            .config
+            .clone()
+            .ok_or_else(|| "el repo remoto no tiene .pages.yml".to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -404,5 +477,44 @@ mod tests {
     #[test]
     fn yaml_roto_es_error() {
         assert!(parse_config("content: [").is_err());
+    }
+
+    #[test]
+    fn settings_commit_templates_se_parsean() {
+        let raw = "media:\n  input: m\nsettings:\n  commit:\n    templates:\n      update: \"[{branch}] {path} editado por {user}\"\n      create: \"\"\n      delete: 42\ncontent: []\n";
+        let cfg = parse_config(raw).unwrap();
+        assert_eq!(
+            cfg.settings.commit_templates.update.as_deref(),
+            Some("[{branch}] {path} editado por {user}")
+        );
+        // create vacío no cuenta (cae al default en el resolve).
+        assert_eq!(cfg.settings.commit_templates.create, None);
+        // delete no-string avisa y se ignora.
+        assert!(cfg
+            .warnings
+            .iter()
+            .any(|w| w.contains("settings") && w.contains("delete")));
+
+        // Sin settings: defaults vacíos y sin warnings.
+        let cfg = parse_config("content: []\n").unwrap();
+        assert_eq!(cfg.settings.commit_templates, CommitTemplates::default());
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+    }
+
+    #[test]
+    fn commit_templates_por_item_se_parsean() {
+        let raw = "content:\n  - name: blog\n    path: src/content/blog\n    commit:\n      templates:\n        update: \"Blog: {filename}\"\n    fields: []\n";
+        let cfg = parse_config(raw).unwrap();
+        assert_eq!(
+            cfg.content[0]
+                .commit_templates
+                .as_ref()
+                .and_then(|t| t.update.as_deref()),
+            Some("Blog: {filename}")
+        );
+        // Otro ítem sin commit → None.
+        let raw = "content:\n  - name: blog\n    path: a\n    fields: []\n  - name: otro\n    path: b\n    fields: []\n";
+        let cfg = parse_config(raw).unwrap();
+        assert!(cfg.content[1].commit_templates.is_none());
     }
 }

@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::{
     entry::{ensure_writable, safe_join},
-    state::{AppState, RepoState},
+    state::{AppState, Project, RepoState},
 };
 
 const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"];
@@ -223,8 +223,10 @@ fn track(st: &mut RepoState, rel: &str) {
 #[tauri::command]
 pub fn list_media(state: tauri::State<'_, AppState>) -> Result<Vec<MediaRef>, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    list_media_impl(st)
+    match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => list_media_impl(st),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -233,15 +235,19 @@ pub fn import_media(
     src: &str,
 ) -> Result<MediaRef, String> {
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    import_media_impl(st, src)
+    match guard.as_mut().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => import_media_impl(st, src),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[tauri::command]
 pub fn delete_media(state: tauri::State<'_, AppState>, path: &str) -> Result<(), String> {
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    delete_media_impl(st, path)
+    match guard.as_mut().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => delete_media_impl(st, path),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[cfg(test)]

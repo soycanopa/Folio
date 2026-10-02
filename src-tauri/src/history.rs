@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
-use crate::state::AppState;
+use crate::state::{AppState, Project};
 
 /// Commits recientes que tocaron un archivo (UX.md: "pocos commits").
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -95,8 +95,10 @@ pub fn file_history(
     path: &str,
 ) -> Result<Vec<CommitInfo>, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    file_history_impl(&st.repo, path)
+    match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => file_history_impl(&st.repo, path),
+        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    }
 }
 
 #[cfg(test)]

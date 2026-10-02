@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::{
     config::{self, PagesConfig},
-    state::{AppState, RepoState},
+    state::{AppState, Project, RepoState},
 };
 
 #[derive(Serialize)]
@@ -17,6 +17,10 @@ pub struct RepoSummary {
     pub has_config: bool,
     /// Motivo por el que el `.pages.yml` no se pudo usar, si aplica.
     pub config_error: Option<String>,
+    /// "local" | "remote".
+    pub mode: String,
+    /// "owner/repo" cuando se conoce (clone desde GitHub o remoto).
+    pub owner_repo: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -83,14 +87,29 @@ fn open_repo_at(state: &AppState, path: &str) -> Result<RepoSummary, String> {
         branch,
         has_config: cfg.is_some(),
         config_error,
+        mode: "local".to_string(),
+        owner_repo: None,
     };
-    *state.lock().unwrap() = Some(RepoState {
+    *state.lock().unwrap() = Some(Project::Local(RepoState {
         repo,
         root,
         config: cfg,
         touched: Vec::new(),
-    });
+    }));
     Ok(summary)
+}
+
+/// "https://github.com/owner/repo.git" → "owner/repo".
+fn owner_repo_from_url(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://github.com/")?;
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let mut parts = rest.split('/');
+    let owner = parts.next()?;
+    let name = parts.next()?;
+    if owner.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{name}"))
 }
 
 /// Clona con el `git` del sistema (credenciales de la máquina) y deja
@@ -103,7 +122,8 @@ pub fn clone_repo(
     dest: &str,
 ) -> Result<RepoSummary, String> {
     clone_into(url, dest)?;
-    let summary = open_repo_at(&state, dest)?;
+    let mut summary = open_repo_at(&state, dest)?;
+    summary.owner_repo = owner_repo_from_url(url);
     allow_asset_scope(&app, &summary.root)?;
     Ok(summary)
 }
@@ -133,14 +153,28 @@ pub fn list_entries(
     collection: &str,
 ) -> Result<Vec<EntryRef>, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    list_entries_impl(&st.root, collection)
+    match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => list_entries_impl(&st.root, collection),
+        Project::Remote(_) => Err(WIP_REMOTE.to_string()),
+    }
 }
+
+/// Los comandos de lectura/escritura remota llegan en los siguientes
+/// commits de esta misma fase.
+pub(crate) const WIP_REMOTE: &str = "modo remoto: disponible en el siguiente paso de la fase";
 
 #[tauri::command]
 pub fn repo_status(state: tauri::State<'_, AppState>) -> Result<RepoStatus, String> {
     let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
+    let st = match guard.as_ref().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => st,
+        Project::Remote(_) => {
+            return Err(
+                "repo_status es de proyectos locales; en remoto cada save publica en la rama"
+                    .to_string(),
+            )
+        }
+    };
     let repo = &st.repo;
 
     let branch = repo
@@ -320,5 +354,19 @@ mod tests {
     fn clone_con_args_vacios_es_error() {
         assert!(clone_into("", "/tmp/x").is_err());
         assert!(clone_into("url", "").is_err());
+    }
+
+    #[test]
+    fn owner_repo_desde_url() {
+        assert_eq!(
+            owner_repo_from_url("https://github.com/hunvreus/pagescms.git"),
+            Some("hunvreus/pagescms".to_string())
+        );
+        assert_eq!(
+            owner_repo_from_url("https://github.com/a/b"),
+            Some("a/b".to_string())
+        );
+        assert_eq!(owner_repo_from_url("https://gitlab.com/a/b"), None);
+        assert_eq!(owner_repo_from_url("/ruta/local"), None);
     }
 }

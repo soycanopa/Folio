@@ -1,4 +1,5 @@
 pub mod commit;
+pub mod commit_message;
 pub mod config;
 pub mod entry;
 pub mod file_entry;
@@ -8,6 +9,7 @@ pub mod history;
 pub mod media;
 pub mod push;
 pub mod recent;
+pub mod remote;
 pub mod repo;
 pub mod state;
 
@@ -22,6 +24,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             repo::open_repo,
             repo::clone_repo,
+            remote::open_remote_repo,
             repo::repo_status,
             repo::list_entries,
             config::read_config,
