@@ -631,16 +631,40 @@ export default function App() {
     ? { accounts: [{ login: ghSession.login, repositorySelection: "all" as const }] }
     : null;
 
+  // La pregunta local-vs-remoto vive en las dos ramas: sin proyecto
+  // abierto el return temprano del home se la saltaba (bug: Open no
+  // hacía nada visible).
+  const openModeDialog = openModeFor && (
+    <OpenModeDialog
+      owner={openModeFor.owner}
+      repo={openModeFor.repo}
+      onClose={() => setOpenModeFor(null)}
+      onLocal={() => {
+        const v = openModeFor;
+        setOpenModeFor(null);
+        void cloneVisit(v);
+      }}
+      onRemote={() => {
+        const v = openModeFor;
+        setOpenModeFor(null);
+        void openRemoteRepoFlow(v.owner, v.repo);
+      }}
+    />
+  );
+
   if (!summary) {
     return (
-      <HomePage
-        user={homeUser}
-        loadRepos={(keyword) => api.githubListRepos(keyword)}
-        onOpenRepo={(v) => void handleOpenRepo(v)}
-        onCreateTemplate={handleCreateTemplate}
-        onSignIn={() => setView({ kind: "signin" })}
-        onSignOut={() => void handleSignOut()}
-      />
+      <>
+        <HomePage
+          user={homeUser}
+          loadRepos={(keyword) => api.githubListRepos(keyword)}
+          onOpenRepo={(v) => void handleOpenRepo(v)}
+          onCreateTemplate={handleCreateTemplate}
+          onSignIn={() => setView({ kind: "signin" })}
+          onSignOut={() => void handleSignOut()}
+        />
+        {openModeDialog}
+      </>
     );
   }
 
@@ -884,23 +908,7 @@ export default function App() {
         />
       )}
 
-      {openModeFor && (
-        <OpenModeDialog
-          owner={openModeFor.owner}
-          repo={openModeFor.repo}
-          onClose={() => setOpenModeFor(null)}
-          onLocal={() => {
-            const v = openModeFor;
-            setOpenModeFor(null);
-            void cloneVisit(v);
-          }}
-          onRemote={() => {
-            const v = openModeFor;
-            setOpenModeFor(null);
-            void openRemoteRepoFlow(v.owner, v.repo);
-          }}
-        />
-      )}
+      {openModeDialog}
 
       {cloneOpen && (
         <CloneDialog
