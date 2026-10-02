@@ -29,6 +29,11 @@
   --color-canvas: oklch(0.147 0.004 49.25);
   --color-panel: oklch(0.216 0.006 56.043);
   --color-raised: oklch(0.268 0.007 34.298);
+  /* Sidebar del proyecto flotante: gris entre canvas y raised para que
+     contraste como panel sin llegar a claro; su accent mantiene legibles
+     hover/selección sobre ese fondo. */
+  --color-sidebar: oklch(0.245 0.007 56.043);
+  --color-sidebar-accent: oklch(0.31 0.007 34.298);
   --color-line: oklch(1 0 0 / 10%);
   --color-ink: oklch(0.985 0.001 106.423);
   --color-ink-dim: oklch(0.709 0.01 56.259);
