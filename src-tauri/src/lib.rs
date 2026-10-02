@@ -1,4 +1,5 @@
 pub mod commit;
+pub mod actions;
 pub mod commit_message;
 pub mod config;
 pub mod entry;
@@ -61,6 +62,10 @@ pub fn run() {
             recent::add_recent_repo,
             recent::remove_recent_repo,
             history::file_history,
+            actions::run_action,
+            actions::action_runs,
+            actions::cancel_action_run,
+            actions::rerun_action_run,
             commit::commit,
             push::push
         ])
