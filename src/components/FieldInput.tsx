@@ -77,7 +77,7 @@ export function FieldInput({
         rows={3}
         value={str}
         onChange={(e) => onChange(e.currentTarget.value)}
-        className="w-full resize-y rounded-lg bg-panel px-3 py-2 text-sm outline-none placeholder:text-ink-dim focus:ring-1 focus:ring-accent"
+        className="w-full resize-y rounded-lg bg-panel px-3 py-2 text-sm outline-none placeholder:text-ink-dim focus:ring-1 focus:ring-ring"
       />
     );
   }
@@ -88,7 +88,7 @@ export function FieldInput({
       value={str}
       onChange={(e) => onChange(e.currentTarget.value)}
       placeholder={field.type === "image" ? "/images/…" : ""}
-      className="w-full rounded-lg bg-panel px-3 py-2 text-sm outline-none placeholder:text-ink-dim focus:ring-1 focus:ring-accent"
+      className="w-full rounded-lg bg-panel px-3 py-2 text-sm outline-none placeholder:text-ink-dim focus:ring-1 focus:ring-ring"
     />
   );
 }

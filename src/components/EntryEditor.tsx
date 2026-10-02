@@ -167,7 +167,7 @@ export function EntryEditor({
           <button
             onClick={onSave}
             disabled={!dirty}
-            className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-accent-ink disabled:opacity-40"
+            className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
           >
             Save
           </button>

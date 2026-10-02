@@ -64,7 +64,7 @@ export function CollectionTable({
             value={query}
             onChange={(e) => setQuery(e.currentTarget.value)}
             placeholder="Search…"
-            className="w-full rounded-lg bg-panel py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-ink-dim focus:ring-1 focus:ring-accent"
+            className="w-full rounded-lg bg-panel py-1.5 pl-8 pr-3 text-sm outline-none placeholder:text-ink-dim focus:ring-1 focus:ring-ring"
           />
         </div>
         <button

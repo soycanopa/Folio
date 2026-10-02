@@ -5,13 +5,25 @@
 https://github.com/hunvreus/pagescms — ver `reference/pagescms` fuera de
 este repo para la copia de referencia.
 
-Folio usa de Pages CMS, con licencia MIT:
+**Archivos portados completos** (cabecera de licencia incluida en cada
+uno, imports adaptados):
 
-- Los tokens del tema visual (paleta oklch del modo oscuro, radios),
-  derivados de su `app/globals.css`.
-- Su convención de contenido: el cuerpo del documento vive bajo la key
-  `body` del objeto de entrada (su `lib/serialization.ts`).
+- `src/components/editor/index.tsx` — su `components/ui/editor/index.tsx`
+  (editor TipTap con BubbleMenu, block-type, link popover, alt de imagen,
+  acciones de tabla, paste/drop de imágenes, salida Markdown vía
+  `@tiptap/markdown`).
+- `src/components/editor/slash-command/commands.ts`,
+  `commands-list.tsx`, `suggestion.tsx` — su menú slash-command.
+- `src/lib/utils.ts` — su helper `cn` (shadcn estándar).
 
-Ningún archivo de Pages CMS se copió completo. Cuando se copie un
-componente (p.ej. un campo de `fields/`), debe llevar cabecera MIT y
-entrar en esta lista.
+**Derivados de su código, reescritos:**
+
+- Los tokens del tema (paleta oklch del modo oscuro, con nombres
+  shadcn: `primary` es el verde del Save, `accent` el gris de hover)
+  y la tipografía del editor, de su `app/globals.css` y
+  `fields/core/rich-text/edit-component.css`.
+- La convención de contenido: el cuerpo del documento vive bajo la key
+  `body` (su `lib/serialization.ts`).
+
+Nada del servidor de Pages CMS (`app/`, `db/`, GitHub App) se porta ni
+se ejecuta: el editor portado no importa su cliente HTTP ni su auth.

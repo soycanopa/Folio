@@ -398,7 +398,7 @@ export default function App() {
   if (!summary) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-4">
-        <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent text-accent-ink">
+        <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
           <NotebookPen size={24} />
         </span>
         <h1 className="text-2xl font-semibold">Folio</h1>
@@ -408,7 +408,7 @@ export default function App() {
         </p>
         <button
           onClick={pickFolder}
-          className="mt-2 flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink"
+          className="mt-2 flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
         >
           <FolderOpen size={15} /> Open folder…
         </button>

@@ -33,7 +33,7 @@ export function Sidebar({
   return (
     <aside className="flex h-full w-56 shrink-0 flex-col bg-panel border-r border-line">
       <div className="relative mx-2 mt-2 flex items-center gap-3 rounded-lg px-3 py-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent text-accent-ink">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <NotebookPen size={16} />
         </span>
         <span className="min-w-0 flex-1">
@@ -130,7 +130,7 @@ export function Sidebar({
           F
           <span
             className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-panel ${
-              dirty ? "bg-amber-400" : "bg-accent"
+              dirty ? "bg-amber-400" : "bg-primary"
             }`}
             title={dirty ? "Uncommitted changes" : "Clean"}
           />
