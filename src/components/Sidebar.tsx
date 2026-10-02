@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid, NotebookPen } from "lucide-react";
+import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid } from "lucide-react";
+import { PagesMark } from "./PagesMark";
 import type { ContentItem, RepoStatus, RepoSummary } from "../types";
 
 interface SidebarProps {
@@ -38,9 +39,9 @@ export function Sidebar({
         <button
           onClick={onHome}
           title="All projects"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
         >
-          <NotebookPen size={16} />
+          <PagesMark size={18} />
         </button>
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{repoName}</span>

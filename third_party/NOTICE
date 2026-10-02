@@ -27,3 +27,7 @@ uno, imports adaptados):
 
 Nada del servidor de Pages CMS (`app/`, `db/`, GitHub App) se porta ni
 se ejecuta: el editor portado no importa su cliente HTTP ni su auth.
+
+**Marca:** el logo de Pages CMS (`app/icon.svg` de su repo) se usa como
+icono de la aplicación (`src-tauri/icons/`, regenerado con `tauri icon`
+desde `app-icon.svg`) y como marca del sidebar (`src/components/PagesMark.tsx`).
