@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { Toaster } from "sonner";
 import "./index.css";
 
 // Un crash de React no puede ser pantalla negra: el error queda
@@ -55,6 +56,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ErrorBoundary>
       <App />
+      <Toaster theme="dark" position="bottom-right" />
     </ErrorBoundary>
   </React.StrictMode>,
 );

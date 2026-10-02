@@ -106,13 +106,12 @@ export interface GithubUser {
 }
 
 export interface GhRepo {
-  full_name: string;
+  repo: string;
   owner: string;
   private: boolean;
-  /** Unix seconds de updatedAt. */
-  updated_at: number;
-  default_branch: string;
-  clone_url: string;
+  /** ISO 8601, como su endpoint /api/repos/{login}. */
+  updatedAt: string;
+  defaultBranch: string;
 }
 
 export interface RecentRepo {

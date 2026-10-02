@@ -41,15 +41,17 @@ pub struct GithubSession {
     pub token: String,
 }
 
+/// La forma que consume su RepoSelect: repo corto, owner, private,
+/// updatedAt ISO y defaultBranch.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct GhRepo {
-    pub full_name: String,
+    pub repo: String,
     pub owner: String,
     pub private: bool,
-    /// Unix seconds de updatedAt.
-    pub updated_at: i64,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+    #[serde(rename = "defaultBranch")]
     pub default_branch: String,
-    pub clone_url: String,
 }
 
 // ---- HTTP ----
@@ -201,7 +203,6 @@ struct RawRepo {
     full_name: String,
     private: bool,
     default_branch: String,
-    clone_url: String,
     updated_at: String,
     owner: RawOwner,
 }
@@ -211,37 +212,7 @@ struct RawOwner {
     login: String,
 }
 
-/// "2024-05-01T12:34:56Z" (UTC, formato fijo de la API) → unix secs.
-pub fn parse_gh_time(s: &str) -> Option<i64> {
-    fn digits(s: &str) -> Option<i64> {
-        s.parse().ok()
-    }
-    if s.len() < 19 || !s.ends_with('Z') {
-        return None;
-    }
-    let y = digits(s.get(0..4)?)?;
-    let mo = digits(s.get(5..7)?)?;
-    let d = digits(s.get(8..10)?)?;
-    let h = digits(s.get(11..13)?)?;
-    let mi = digits(s.get(14..16)?)?;
-    let se = digits(s.get(17..19)?)?;
-    // Days from civil (Howard Hinnant), válido para fechas post-1970.
-    let y = if mo <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (mo + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146097 + doe - 719468;
-    Some(days * 86400 + h * 3600 + mi * 60 + se)
-}
-
 pub fn list_repos(token: &str) -> Result<Vec<GhRepo>, String> {
-    #[derive(Deserialize)]
-    struct Wrapper {
-        #[serde(flatten)]
-        repo: RawRepo,
-    }
     let raws: Vec<RawRepo> = get_json_with_token(
         "https://api.github.com/user/repos?sort=updated&per_page=30&affiliation=owner,collaborator,organization_member",
         token,
@@ -249,12 +220,16 @@ pub fn list_repos(token: &str) -> Result<Vec<GhRepo>, String> {
     Ok(raws
         .into_iter()
         .map(|r| GhRepo {
-            full_name: r.full_name,
+            repo: r
+                .full_name
+                .split('/')
+                .next_back()
+                .unwrap_or(&r.full_name)
+                .to_string(),
             owner: r.owner.login,
             private: r.private,
-            updated_at: parse_gh_time(&r.updated_at).unwrap_or(0),
+            updated_at: r.updated_at,
             default_branch: r.default_branch,
-            clone_url: r.clone_url,
         })
         .collect())
 }
@@ -365,26 +340,22 @@ mod tests {
 
     #[test]
     fn parsea_tiempo_y_repos_de_la_api() {
-        // 2026-01-01T00:00:00Z = 1767225600; oct-01 = +273 días, 12:30
-        assert_eq!(parse_gh_time("2026-01-01T00:00:00Z"), Some(1767225600));
-        assert_eq!(parse_gh_time("2026-10-01T12:30:00Z"), Some(1790857800));
-
-        let raw = r#"[{"name":"pagescms","full_name":"hunvreus/pagescms","private":false,"default_branch":"main","clone_url":"https://github.com/hunvreus/pagescms.git","updated_at":"2026-01-01T00:00:00Z","owner":{"login":"hunvreus"}}]"#;
+        let raw = r#"[{"name":"pagescms","full_name":"hunvreus/pagescms","private":false,"default_branch":"main","updated_at":"2026-01-01T00:00:00Z","owner":{"login":"hunvreus"}}]"#;
         let repos: Vec<GhRepo> = serde_json::from_str::<Vec<RawRepo>>(raw)
             .unwrap()
             .into_iter()
             .map(|r| GhRepo {
-                full_name: r.full_name,
+                repo: r.full_name.split('/').next_back().unwrap_or(&r.full_name).to_string(),
                 owner: r.owner.login,
                 private: r.private,
-                updated_at: parse_gh_time(&r.updated_at).unwrap_or(0),
+                updated_at: r.updated_at,
                 default_branch: r.default_branch,
-                clone_url: r.clone_url,
             })
             .collect();
-        assert_eq!(repos[0].full_name, "hunvreus/pagescms");
+        assert_eq!(repos[0].repo, "pagescms");
         assert_eq!(repos[0].owner, "hunvreus");
         assert!(!repos[0].private);
+        assert_eq!(repos[0].default_branch, "main");
     }
 
     #[test]

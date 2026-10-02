@@ -31,3 +31,15 @@ se ejecuta: el editor portado no importa su cliente HTTP ni su auth.
 **Marca:** el logo de Pages CMS (`app/icon.svg` de su repo) se usa como
 icono de la aplicación (`src-tauri/icons/`, regenerado con `tauri icon`
 desde `app-icon.svg`) y como marca del sidebar (`src/components/PagesMark.tsx`).
+
+## Home (port completo, 2026-10-02)
+
+- `src/components/ui/` — su pila shadcn (`button`, `button-group`,
+  `input`, `skeleton`, `empty`, `tooltip`, `dropdown-menu`, `dialog`,
+  `label`, `separator`).
+- `src/components/home/` — sus `repo-latest`, `repo-select`,
+  `repo-templates` y `app/(main)/page.tsx` (como `home-page.tsx`).
+- `src/lib/tracker.ts` — su tracker de visitas.
+- `src/lib/templates.ts` — su lista de templates (3 featured).
+- Dependencias de su pila: radix-ui, class-variance-authority,
+  date-fns, use-debounce, sonner.
