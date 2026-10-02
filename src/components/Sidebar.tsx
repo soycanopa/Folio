@@ -30,7 +30,10 @@ export function Sidebar({
   onHome,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const repoName = summary.root.split("/").filter(Boolean).pop() ?? "repo";
+  const remote = summary.mode === "remote";
+  const repoName = remote
+    ? (summary.owner_repo?.split("/").pop() ?? "repo")
+    : (summary.root.split("/").filter(Boolean).pop() ?? "repo");
   const dirty = status?.dirty ?? false;
 
   return (
@@ -49,6 +52,7 @@ export function Sidebar({
             {status?.branch ?? summary.branch}
             {status && status.ahead > 0 ? ` ↑${status.ahead}` : ""}
             {status && status.behind > 0 ? ` ↓${status.behind}` : ""}
+            {remote ? " · remote" : ""}
           </span>
         </span>
         <button

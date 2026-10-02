@@ -1,5 +1,9 @@
 /*
  * Copiado de Pages CMS (https://github.com/hunvreus/pagescms) — MIT License.
+ * Source: lib/tracker.ts
+ * Adapted: la visita registra el modo en que Folio abrió el proyecto
+ * ("local" = clon en disco, "remote" = API de GitHub sin clonar) para
+ * reabrirlo igual sin volver a preguntar.
  */
 
 type RepoVisit = {
@@ -7,35 +11,38 @@ type RepoVisit = {
   repo: string;
   branch: string;
   timestamp: number;
+  mode?: 'local' | 'remote';
 };
 
 const STORAGE_KEY = 'latestVisits';
 const MAX_VISITS = 5;
 
-const trackVisit = (owner: string, repo: string, branch: string): void => {
+const trackVisit = (owner: string, repo: string, branch: string, mode: 'local' | 'remote' = 'local'): void => {
   try {
     const storedVisits = localStorage.getItem(STORAGE_KEY);
     const visits: RepoVisit[] = storedVisits ? JSON.parse(storedVisits) : [];
-    
-    const existingIndex = visits.findIndex(v => 
-      v.owner.toLowerCase() === owner.toLowerCase() && 
+
+    const existingIndex = visits.findIndex(v =>
+      v.owner.toLowerCase() === owner.toLowerCase() &&
       v.repo.toLowerCase() === repo.toLowerCase());
-    
+
     const currentTime = Math.floor(Date.now() / 1000);
-    
+
     if (existingIndex >= 0) {
       visits[existingIndex] = {
         owner,
         repo,
         branch,
-        timestamp: currentTime
+        timestamp: currentTime,
+        mode,
       };
     } else {
       visits.push({
         owner,
         repo,
         branch,
-        timestamp: currentTime
+        timestamp: currentTime,
+        mode,
       });
     }
     

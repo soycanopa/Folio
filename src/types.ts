@@ -37,6 +37,13 @@ export interface ViewCfg {
   order?: string | null;
 }
 
+export interface CommitTemplates {
+  create?: string | null;
+  update?: string | null;
+  delete?: string | null;
+  rename?: string | null;
+}
+
 export interface ContentItem {
   name: string;
   /** "collection" | "file". */
@@ -49,12 +56,15 @@ export interface ContentItem {
   operations: Operations;
   /** Label del `type: group` que lo contiene. */
   group?: string | null;
+  /** `commit.templates` del ítem (mensajes del modo remoto). */
+  commit_templates?: CommitTemplates | null;
 }
 
 export interface PagesConfig {
   media: Media;
   content: ContentItem[];
   warnings: string[];
+  settings: { commit_templates: CommitTemplates };
 }
 
 export interface RepoSummary {
@@ -62,6 +72,16 @@ export interface RepoSummary {
   branch: string;
   has_config: boolean;
   config_error?: string | null;
+  /** "local" (clon en disco) | "remote" (API de GitHub, sin clonar). */
+  mode: "local" | "remote";
+  /** "owner/repo" cuando se conoce. */
+  owner_repo?: string | null;
+}
+
+/** Preview de media remota: URL directa o path local cacheado. */
+export interface MediaSrc {
+  is_asset: boolean;
+  url: string;
 }
 
 export interface RepoStatus {
@@ -130,4 +150,6 @@ export interface CommitInfo {
   time: number;
   /** true si no llegó al upstream. */
   local: boolean;
+  /** Link al commit en GitHub (modo remoto). */
+  html_url?: string | null;
 }

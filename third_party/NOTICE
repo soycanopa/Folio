@@ -39,7 +39,37 @@ desde `app-icon.svg`) y como marca del sidebar (`src/components/PagesMark.tsx`).
   `label`, `separator`).
 - `src/components/home/` — sus `repo-latest`, `repo-select`,
   `repo-templates` y `app/(main)/page.tsx` (como `home-page.tsx`).
-- `src/lib/tracker.ts` — su tracker de visitas.
+- `src/lib/tracker.ts` — su tracker de visitas. Adaptado: la visita
+  registra el modo (`local`/`remote`) con que Folio abrió el proyecto.
 - `src/lib/templates.ts` — su lista de templates (3 featured).
 - Dependencias de su pila: radix-ui, class-variance-authority,
   date-fns, use-debounce, sonner.
+
+## Modo remoto (port de comportamiento, 2026-10-02)
+
+El flujo de edición remota replica el de su web contra la API de
+GitHub, con su server sustituido por el core de Folio (token del
+usuario):
+
+- **Lectura**: su `lib/config-store.ts` (Contents API para
+  `.pages.yml`) y su `lib/github-cache-folders.ts` (query GraphQL Tree
+  por carpeta para colecciones, REST contents para media).
+- **Publicación**: su `app/api/[owner]/[repo]/[branch]/files/[path]/
+  route.ts` — `PUT /contents/{path}` con sha (un archivo = un commit),
+  `DELETE` con sha, auto-rename `name-N` en 422, copies de 409
+  (reglas → pull request; sha → "File has changed since you last
+  loaded it", con "page"→"entry" porque Folio no recarga páginas).
+- **Rename**: su `files/[path]/rename/route.ts` (`githubRenameFile`,
+  Git Data en 5 pasos).
+- **Mensajes de commit**: su `lib/commit-message.ts` (plantillas,
+  tokens, override por `.pages.yml`, recorte a 200), con el sufijo
+  "(via Folio)" en vez de "(via Pages CMS)" para atribución
+  verdadera. Divergencia: `settings.commit.identity` no aplica (no
+  hay GitHub App); el commit firma GitHub con el usuario del token.
+- **Historial**: su `entries/[path]/history` —
+  `GET /commits?path=&sha=`, con link `html_url` por commit.
+- **Previews de media**: divergencia documentada — su web usa URLs
+  autenticadas en el navegador; Folio nunca expone el token al
+  webview, así que los repos públicos usan `raw.githubusercontent.com`
+  y los privados pasan por un proxy del core con caché por sha
+  servida por el asset protocol.

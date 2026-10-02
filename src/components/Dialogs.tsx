@@ -108,6 +108,52 @@ export function DiscardDialog({
   );
 }
 
+// La pregunta local-vs-remoto al abrir un proyecto (AGENTS.md): clonar
+// en disco o editar contra la API de GitHub como la web, sin clonar.
+export function OpenModeDialog({
+  owner,
+  repo,
+  onClose,
+  onLocal,
+  onRemote,
+}: {
+  owner: string;
+  repo: string;
+  onClose: () => void;
+  onLocal: () => void;
+  onRemote: () => void;
+}) {
+  return (
+    <Modal title={`Open ${owner}/${repo}`} onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-ink-dim">
+          How do you want to work on this repository?
+        </p>
+        <button
+          onClick={onLocal}
+          className="flex flex-col items-start gap-1 rounded-lg border border-line px-4 py-3 text-left hover:bg-raised"
+        >
+          <span className="text-sm font-medium">Clone locally</span>
+          <span className="text-xs text-ink-dim">
+            Full copy on disk — offline editing, local commits, push when
+            you decide.
+          </span>
+        </button>
+        <button
+          onClick={onRemote}
+          className="flex flex-col items-start gap-1 rounded-lg border border-line px-4 py-3 text-left hover:bg-raised"
+        >
+          <span className="text-sm font-medium">Remote (like the web)</span>
+          <span className="text-xs text-ink-dim">
+            No clone: read and publish through the GitHub API on the
+            default branch. Every save is a commit.
+          </span>
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function CloneDialog({
   onClose,
   onClone,

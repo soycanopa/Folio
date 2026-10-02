@@ -24,10 +24,11 @@ import {
   CommitDialog,
   DiscardDialog,
   NewEntryDialog,
+  OpenModeDialog,
 } from "./components/Dialogs";
 import { MediaView } from "./components/Media";
 import { HomePage } from "./components/home/home-page";
-import { trackVisit } from "./lib/tracker";
+import { getVisits, trackVisit } from "./lib/tracker";
 import { toast } from "sonner";
 import { SignInScreen } from "./components/SignInScreen";
 
@@ -57,6 +58,12 @@ export default function App() {
   const [commitOpen, setCommitOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  /** Repo elegido esperando la pregunta local-vs-remoto. */
+  const [openModeFor, setOpenModeFor] = useState<{
+    owner: string;
+    repo: string;
+    branch: string;
+  } | null>(null);
   const [mediaItems, setMediaItems] = useState<MediaRef[]>([]);
   /** Navegación bloqueada por cambios sin guardar: run() al resolver. */
   const [guard, setGuard] = useState<null | "close" | { run: () => void }>(
@@ -396,9 +403,52 @@ export default function App() {
     }
   }, []);
 
-  // El Open de su home: clona en la carpeta que elijas y registra la
-  // visita como su tracker.
+  // Proyecto remoto: sin carpeta, rama por defecto, edición contra la
+  // API de GitHub (AGENTS.md). El Save publica directo en la rama.
+  const openRemoteRepoFlow = useCallback(
+    async (owner: string, repo: string) => {
+      try {
+        const s = await api.openRemoteRepo(owner, repo);
+        setSummary(s);
+        trackVisit(owner, repo, s.branch, "remote");
+        setStatus(null);
+        setView({ kind: "empty" });
+        setRows([]);
+        if (!s.has_config) {
+          setConfig(null);
+          return;
+        }
+        const cfg = await api.readConfig();
+        setConfig(cfg);
+        void loadMedia();
+        if (cfg.content.length > 0) selectCollection(cfg.content[0]);
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [loadMedia, selectCollection],
+  );
+
+  // El Open de su home pregunta local (clona en la carpeta que elijas)
+  // o remoto (como la web, sin clonar) — salvo que el tracker ya sepa
+  // cómo se abrió antes: los recientes reabren directo.
   const handleOpenRepo = useCallback(
+    (visit: { owner: string; repo: string; branch: string }) => {
+      const known = getVisits().find(
+        (v) =>
+          v.owner.toLowerCase() === visit.owner.toLowerCase() &&
+          v.repo.toLowerCase() === visit.repo.toLowerCase(),
+      );
+      if (known?.mode === "remote") {
+        void openRemoteRepoFlow(visit.owner, visit.repo);
+        return;
+      }
+      setOpenModeFor(visit);
+    },
+    [openRemoteRepoFlow],
+  );
+
+  const cloneVisit = useCallback(
     async (visit: { owner: string; repo: string; branch: string }) => {
       try {
         const dest = await openFolderDialog({
@@ -411,7 +461,7 @@ export default function App() {
           `https://github.com/${visit.owner}/${visit.repo}.git`,
           target,
         );
-        trackVisit(visit.owner, visit.repo, visit.branch);
+        trackVisit(visit.owner, visit.repo, visit.branch, "local");
         await openRepoFlow(target);
       } catch (e) {
         setMessage(String(e));
@@ -551,7 +601,11 @@ export default function App() {
 
       <main className="relative flex min-w-0 flex-1 flex-col">
         {!config ? (
-          <EmptyConfig summary={summary} onPick={pickFolder} />
+          <EmptyConfig
+            summary={summary}
+            remote={summary.mode === "remote"}
+            onPick={summary.mode === "remote" ? goHome : pickFolder}
+          />
         ) : view.kind === "home" ? (
           <HomePage
             user={homeUser}
@@ -669,7 +723,13 @@ export default function App() {
             Select a collection.
           </div>
         )}
-        <StatusBar message={message} status={status} config={config} />
+        <StatusBar
+          message={message}
+          status={status}
+          config={config}
+          summary={summary}
+          dirty={dirty}
+        />
       </main>
 
       {guard && (
@@ -720,6 +780,24 @@ export default function App() {
         />
       )}
 
+      {openModeFor && (
+        <OpenModeDialog
+          owner={openModeFor.owner}
+          repo={openModeFor.repo}
+          onClose={() => setOpenModeFor(null)}
+          onLocal={() => {
+            const v = openModeFor;
+            setOpenModeFor(null);
+            void cloneVisit(v);
+          }}
+          onRemote={() => {
+            const v = openModeFor;
+            setOpenModeFor(null);
+            void openRemoteRepoFlow(v.owner, v.repo);
+          }}
+        />
+      )}
+
       {cloneOpen && (
         <CloneDialog
           onClose={() => setCloneOpen(false)}
@@ -751,9 +829,12 @@ export default function App() {
 
 function EmptyConfig({
   summary,
+  remote,
   onPick,
 }: {
   summary: RepoSummary;
+  /** Remoto: el botón vuelve al home; no hay carpeta que elegir. */
+  remote?: boolean;
   onPick: () => void;
 }) {
   return (
@@ -761,13 +842,13 @@ function EmptyConfig({
       <h1 className="text-lg font-semibold">No content configuration</h1>
       <p className="max-w-md text-center text-sm text-ink-dim">
         {summary.config_error ??
-          "This repository has no .pages.yml at its root. Folio reads that file to build its forms, like Pages CMS does."}
+          `This repository has no .pages.yml at its root. Folio reads that file to build its forms, like Pages CMS does.`}
       </p>
       <button
         onClick={onPick}
         className="mt-2 rounded-lg border border-line px-4 py-2 text-sm hover:bg-panel"
       >
-        Choose another folder
+        {remote ? "Choose another repository" : "Choose another folder"}
       </button>
     </div>
   );
@@ -777,21 +858,36 @@ function StatusBar({
   message,
   status,
   config,
+  summary,
+  dirty,
 }: {
   message: string;
   status: RepoStatus | null;
   config: PagesConfig | null;
+  summary: RepoSummary;
+  dirty: boolean;
 }) {
+  const remote = summary.mode === "remote";
   return (
     <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-panel/60 px-4 text-[11px] text-ink-dim">
-      {status && (
+      {remote ? (
         <>
-          <span>{status.branch}</span>
-          {status.dirty && <span className="text-amber-400">● uncommitted</span>}
-          {status.ahead > 0 && <span>↑{status.ahead} to push</span>}
-          {status.behind > 0 && <span>↓{status.behind} to pull</span>}
-          {!status.has_upstream && <span>no upstream</span>}
+          <span className="text-ink">{summary.branch}</span>
+          <span className="text-sky-400">◆ GitHub (remote)</span>
+          {dirty && <span className="text-amber-400">● unsaved</span>}
         </>
+      ) : (
+        status && (
+          <>
+            <span>{status.branch}</span>
+            {status.dirty && (
+              <span className="text-amber-400">● uncommitted</span>
+            )}
+            {status.ahead > 0 && <span>↑{status.ahead} to push</span>}
+            {status.behind > 0 && <span>↓{status.behind} to pull</span>}
+            {!status.has_upstream && <span>no upstream</span>}
+          </>
+        )
       )}
       {config && config.warnings.length > 0 && (
         <span title={config.warnings.join("\n")}>
