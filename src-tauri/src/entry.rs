@@ -82,6 +82,12 @@ pub fn read_entry_at(root: &Path, path: &str) -> Result<EntryContent, String> {
 // Además valida el esquema como su server (`files/[path]/route.ts`):
 // extensión del ítem, `subfolders: false` y `media.extensions`.
 pub(crate) fn ensure_writable_config(cfg: &crate::config::PagesConfig, rel: &str) -> Result<(), String> {
+    // El propio `.pages.yml` de la raíz es escribible (editor Configuration,
+    // su página /configuration): es el archivo que define las rutas, no un
+    // contenido. Solo la raíz exacta — nada anidado.
+    if rel == ".pages.yml" {
+        return Ok(());
+    }
     if let Some(item) = owning_item(cfg, rel) {
         validate_content_target(item, rel)?;
         return Ok(());
@@ -281,7 +287,7 @@ pub(crate) fn owning_item<'a>(
         .find(|c| rel_path.starts_with(Path::new(&c.path)))
 }
 
-fn track(st: &mut RepoState, path: &str) {
+pub(crate) fn track(st: &mut RepoState, path: &str) {
     let rel = PathBuf::from(path);
     if !st.touched.contains(&rel) {
         st.touched.push(rel);
@@ -724,6 +730,19 @@ mod tests {
         };
         assert_eq!(back_fm.get("title"), Some(&Value::from("Nuevo")));
         assert_eq!(back.body, "cuerpo nuevo\n");
+    }
+
+    #[test]
+    fn pages_yaml_de_raiz_es_escribible_y_lo_demas_no() {
+        // Su /configuration edita el .pages.yml existente: la raíz exacta
+        // pasa; nada anidado ni otros archivos de la raíz.
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = st_with_config(dir.path(), CONFIG_YAML);
+        let cfg = st.config.as_ref().unwrap();
+        assert!(ensure_writable_config(cfg, ".pages.yml").is_ok());
+        assert!(ensure_writable_config(cfg, "src/content/.pages.yml").is_err());
+        let fm = Value::Mapping(Mapping::new());
+        assert!(write_entry_tracked(&mut st, "package.json", fm, "x").is_err());
     }
 
     #[test]
