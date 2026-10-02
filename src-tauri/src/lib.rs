@@ -25,10 +25,13 @@ pub fn run() {
             entry::read_entry,
             entry::write_entry,
             entry::create_entry,
+            entry::rename_entry,
+            entry::delete_entry,
             file_entry::read_file_entry,
             file_entry::write_file_entry,
             media::list_media,
             media::import_media,
+            media::delete_media,
             history::file_history,
             commit::commit,
             push::push

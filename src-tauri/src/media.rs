@@ -20,6 +20,14 @@ pub struct MediaRef {
     pub name: String,
     /// Ruta pública para el front matter: `media.output` + nombre.
     pub public_path: String,
+    /// true si la extensión es de imagen (thumbnail en el grid).
+    pub is_image: bool,
+}
+
+fn is_image_ext(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
 }
 
 fn media_input(st: &RepoState) -> Result<String, String> {
@@ -121,21 +129,19 @@ fn upload_name(original: &str, rename: Option<&str>) -> String {
     }
 }
 
-fn collect_images(dir: &Path, root: &Path, out: &mut Vec<MediaRef>, st: &RepoState) -> Result<(), String> {
+fn collect_files(dir: &Path, root: &Path, out: &mut Vec<MediaRef>, st: &RepoState) -> Result<(), String> {
     for entry in fs::read_dir(dir).map_err(|e| format!("leer {dir:?}: {e}"))? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if path.is_dir() {
-            collect_images(&path, root, out, st)?;
-        } else if path
-            .extension()
-            .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_string_lossy().to_lowercase().as_str()))
-        {
+            collect_files(&path, root, out, st)?;
+        } else {
             let rel = path.strip_prefix(root).map_err(|e| e.to_string())?;
             let rel = rel.to_string_lossy().replace('\\', "/");
             let name = entry.file_name().to_string_lossy().to_string();
             out.push(MediaRef {
                 public_path: public_path(st, &name),
+                is_image: is_image_ext(&name),
                 path: rel,
                 name,
             });
@@ -151,32 +157,25 @@ pub fn list_media_impl(st: &RepoState) -> Result<Vec<MediaRef>, String> {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    collect_images(&dir, &st.root, &mut out, st)?;
+    collect_files(&dir, &st.root, &mut out, st)?;
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
 }
 
-/// Copia una imagen elegida a `media.input` respetando `rename` y la
-/// registra en `touched`: entra en el mismo commit que el `.md`
-/// (FLOW.md, v1 media). Si ya existe, no se pisa.
+/// Copia un archivo a `media.input` respetando `rename` y lo registra
+/// en `touched`: entra en el mismo commit que el `.md` (FLOW.md, v1).
+/// Acepta cualquier tipo (image y file fields); si ya existe, no se pisa.
 pub fn import_media_impl(st: &mut RepoState, src: &str) -> Result<MediaRef, String> {
     let input = media_input(st)?;
     let rename = st.config.as_ref().and_then(|c| c.media.rename.as_deref());
 
-    let ext = Path::new(src)
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    if !IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        return Err(format!(
-            "no parece una imagen (.{ext}); soportadas: {}",
-            IMAGE_EXTENSIONS.join(", ")
-        ));
-    }
     let original = Path::new(src)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .ok_or("no se puede leer el nombre del archivo")?;
+    if original.starts_with('.') {
+        return Err(format!("nombre de archivo inválido: {original:?}"));
+    }
     let name = upload_name(&original, rename);
     if name.trim().is_empty() || name.contains('/') {
         return Err(format!("nombre de archivo inválido: {name:?}"));
@@ -193,15 +192,32 @@ pub fn import_media_impl(st: &mut RepoState, src: &str) -> Result<MediaRef, Stri
         return Err(format!("ya existe {rel}; no se pisa"));
     }
     fs::copy(src, &dest).map_err(|e| format!("copiar {src}: {e}"))?;
-    let relp = std::path::PathBuf::from(&rel);
-    if !st.touched.contains(&relp) {
-        st.touched.push(relp);
-    }
+    track(st, &rel);
     Ok(MediaRef {
         public_path: public_path(st, &name),
+        is_image: is_image_ext(&name),
         path: rel,
         name,
     })
+}
+
+/// Borra un archivo de `media.input`; el commit stagea el borrado.
+pub fn delete_media_impl(st: &mut RepoState, path: &str) -> Result<(), String> {
+    ensure_writable(st, path)?;
+    let full = safe_join(&st.root, path)?;
+    if !full.is_file() {
+        return Err(format!("no existe {path}"));
+    }
+    fs::remove_file(&full).map_err(|e| format!("borrar {path}: {e}"))?;
+    track(st, path);
+    Ok(())
+}
+
+fn track(st: &mut RepoState, rel: &str) {
+    let relp = std::path::PathBuf::from(rel);
+    if !st.touched.contains(&relp) {
+        st.touched.push(relp);
+    }
 }
 
 #[tauri::command]
@@ -219,6 +235,13 @@ pub fn import_media(
     let mut guard = state.lock().unwrap();
     let st = guard.as_mut().ok_or("no hay repo abierto")?;
     import_media_impl(st, src)
+}
+
+#[tauri::command]
+pub fn delete_media(state: tauri::State<'_, AppState>, path: &str) -> Result<(), String> {
+    let mut guard = state.lock().unwrap();
+    let st = guard.as_mut().ok_or("no hay repo abierto")?;
+    delete_media_impl(st, path)
 }
 
 #[cfg(test)]
@@ -255,6 +278,7 @@ mod tests {
         let m = import_media_impl(&mut st, &src).unwrap();
         assert_eq!(m.path, "src/content/media/foto.png");
         assert_eq!(m.public_path, "/images/foto.png");
+        assert!(m.is_image);
         assert!(dir.path().join("src/content/media/foto.png").is_file());
         assert_eq!(st.touched, vec![std::path::PathBuf::from("src/content/media/foto.png")]);
 
@@ -289,12 +313,14 @@ mod tests {
     }
 
     #[test]
-    fn no_imagen_y_sin_media_input_son_error() {
+    fn import_acepta_cualquier_archivo_y_sin_media_input_es_error() {
         let dir = tempfile::tempdir().unwrap();
         let mut st = st_with_config(dir.path(), CONFIG_YAML);
         let txt = dir.path().join("notes.txt");
         fs::write(&txt, "x").unwrap();
-        assert!(import_media_impl(&mut st, txt.to_str().unwrap()).is_err());
+        let m = import_media_impl(&mut st, txt.to_str().unwrap()).unwrap();
+        assert!(!m.is_image);
+        assert!(dir.path().join("src/content/media/notes.txt").is_file());
 
         let yaml = "content: []\n";
         let mut st2 = st_with_config(dir.path(), yaml);
@@ -303,16 +329,39 @@ mod tests {
     }
 
     #[test]
-    fn lista_imagenes_recursivo_y_ordenado() {
+    fn delete_media_borra_y_deja_touched() {
         let dir = tempfile::tempdir().unwrap();
         let mut st = st_with_config(dir.path(), CONFIG_YAML);
+        let src = src_png(dir.path(), "foto.png");
+        let m = import_media_impl(&mut st, &src).unwrap();
+        delete_media_impl(&mut st, &m.path).unwrap();
+        assert!(!dir.path().join(&m.path).exists());
+        assert!(st.touched.contains(&std::path::PathBuf::from(&m.path)));
+        // Fuera de media.input: rechazado por ensure_writable.
+        assert!(delete_media_impl(&mut st, "README.md").is_err());
+    }
+
+    #[test]
+    fn lista_archivos_recursivo_y_ordenado_con_flag_imagen() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = st_with_config(dir.path(), CONFIG_YAML);
         fs::create_dir_all(dir.path().join("src/content/media/sub")).unwrap();
         make_png(&dir.path().join("src/content/media/b.png"));
         make_png(&dir.path().join("src/content/media/sub/a.png"));
-        fs::write(dir.path().join("src/content/media/ignorado.txt"), "x").unwrap();
+        fs::write(dir.path().join("src/content/media/doc.pdf"), "x").unwrap();
         let list = list_media_impl(&st).unwrap();
         let paths: Vec<&str> = list.iter().map(|m| m.path.as_str()).collect();
-        assert_eq!(paths, vec!["src/content/media/b.png", "src/content/media/sub/a.png"]);
-        assert_eq!(list[0].public_path, "/images/b.png");
+        assert_eq!(
+            paths,
+            vec![
+                "src/content/media/b.png",
+                "src/content/media/doc.pdf",
+                "src/content/media/sub/a.png"
+            ]
+        );
+        let by_path = |p: &str| list.iter().find(|m| m.path == p).unwrap();
+        assert!(by_path("src/content/media/b.png").is_image);
+        assert!(!by_path("src/content/media/doc.pdf").is_image);
+        assert_eq!(by_path("src/content/media/b.png").public_path, "/images/b.png");
     }
 }

@@ -48,9 +48,17 @@ pub fn commit_touched(st: &mut RepoState, message: &str) -> Result<String, Strin
 
     let mut index = repo.index().map_err(|e| format!("abrir index: {e}"))?;
     for rel in &st.touched {
-        index
-            .add_path(rel)
-            .map_err(|e| format!("stagear {}: {e}", rel.display()))?;
+        // Si el archivo ya no está en disco fue un borrado de Folio:
+        // se stagea como eliminación (delete_entry).
+        if st.root.join(rel).exists() {
+            index
+                .add_path(rel)
+                .map_err(|e| format!("stagear {}: {e}", rel.display()))?;
+        } else {
+            index
+                .remove_path(rel)
+                .map_err(|e| format!("stagear borrado de {}: {e}", rel.display()))?;
+        }
     }
     let tree_oid = index
         .write_tree()
