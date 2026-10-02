@@ -86,6 +86,12 @@ export interface NewEntry {
   existed: boolean;
 }
 
+export interface RecentRepo {
+  path: string;
+  /** Unix seconds de la última apertura; 0 si el registro es viejo. */
+  last_open: number;
+}
+
 export interface CommitInfo {
   oid: string;
   message: string;

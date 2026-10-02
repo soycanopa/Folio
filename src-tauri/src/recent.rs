@@ -11,6 +11,9 @@ const MAX_RECENT: usize = 12;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RecentRepo {
     pub path: String,
+    /// Unix seconds de la última apertura; 0 si el registro es viejo.
+    #[serde(default)]
+    pub last_open: i64,
 }
 
 pub fn load_from(file: &Path) -> Vec<RecentRepo> {
@@ -29,16 +32,21 @@ pub fn save_to(file: &Path, list: &[RecentRepo]) -> Result<(), String> {
     std::fs::write(file, json).map_err(|e| format!("escribir: {e}"))
 }
 
-/// El más reciente al frente, sin duplicados, con tope.
-pub fn add(list: &[RecentRepo], path: &str) -> Vec<RecentRepo> {
+/// El más reciente al frente, sin duplicados, con tope. Registra el
+/// momento de la apertura para la sección "Recently visited".
+pub fn add(list: &[RecentRepo], path: &str, now: i64) -> Vec<RecentRepo> {
     let mut out: Vec<RecentRepo> = list
         .iter()
         .filter(|r| r.path != path)
         .cloned()
         .collect();
-    out.insert(0, RecentRepo {
-        path: path.to_string(),
-    });
+    out.insert(
+        0,
+        RecentRepo {
+            path: path.to_string(),
+            last_open: now,
+        },
+    );
     out.truncate(MAX_RECENT);
     out
 }
@@ -70,7 +78,11 @@ pub fn add_recent_repo(
     path: String,
 ) -> Result<Vec<RecentRepo>, String> {
     let file = recent_file(&app)?;
-    let list = add(&load_from(&file), &path);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let list = add(&load_from(&file), &path, now);
     save_to(&file, &list)?;
     Ok(list)
 }
@@ -94,17 +106,20 @@ mod tests {
     fn add_dedupe_reciente_y_tope() {
         let mk = |p: &str| RecentRepo {
             path: p.to_string(),
+            last_open: 0,
         };
-        let l = add(&[mk("/a"), mk("/b")], "/c");
+        let l = add(&[mk("/a"), mk("/b")], "/c", 100);
         assert_eq!(l.len(), 3);
         assert_eq!(l[0].path, "/c");
+        assert_eq!(l[0].last_open, 100);
 
-        let l = add(&l, "/a");
+        let l = add(&l, "/a", 200);
         assert_eq!(l.len(), 3);
         assert_eq!(l[0].path, "/a");
+        assert_eq!(l[0].last_open, 200);
 
         let many: Vec<RecentRepo> = (0..15).map(|i| mk(&format!("/r{i}"))).collect();
-        assert_eq!(add(&many, "/new").len(), MAX_RECENT);
+        assert_eq!(add(&many, "/new", 1).len(), MAX_RECENT);
     }
 
     #[test]
@@ -113,14 +128,18 @@ mod tests {
         let file = dir.path().join("recent.json");
         let mk = |p: &str| RecentRepo {
             path: p.to_string(),
+            last_open: 0,
         };
 
-        let l = add(&[], "/x");
+        let l = add(&[], "/x", 5);
         save_to(&file, &l).unwrap();
-        assert_eq!(load_from(&file), vec![mk("/x")]);
+        assert_eq!(load_from(&file), vec![RecentRepo { path: "/x".into(), last_open: 5 }]);
 
-        assert!(remove(&load_from(&file), "/x").is_empty());
-        // Archivo ausente: lista vacía, no error.
+        // Registro viejo sin last_open: default 0, no error.
+        std::fs::write(&file, r#"[{"path":"/old"}]"#).unwrap();
+        assert_eq!(load_from(&file), vec![mk("/old")]);
+
+        assert!(remove(&load_from(&file), "/old").is_empty());
         assert!(load_from(&dir.path().join("nope.json")).is_empty());
     }
 }

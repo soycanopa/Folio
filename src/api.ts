@@ -43,11 +43,11 @@ export const api = {
   importMedia: (src: string) => invoke<MediaRef>("import_media", { src }),
   deleteMedia: (path: string) => invoke<void>("delete_media", { path }),
   listRecentRepos: () =>
-    invoke<{ path: string }[]>("list_recent_repos"),
+    invoke<import("./types").RecentRepo[]>("list_recent_repos"),
   addRecentRepo: (path: string) =>
-    invoke<{ path: string }[]>("add_recent_repo", { path }),
+    invoke<import("./types").RecentRepo[]>("add_recent_repo", { path }),
   removeRecentRepo: (path: string) =>
-    invoke<{ path: string }[]>("remove_recent_repo", { path }),
+    invoke<import("./types").RecentRepo[]>("remove_recent_repo", { path }),
   fileHistory: (path: string) =>
     invoke<import("./types").CommitInfo[]>("file_history", { path }),
 };

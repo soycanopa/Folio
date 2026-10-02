@@ -6,6 +6,7 @@ import type {
   ContentItem,
   MediaRef,
   PagesConfig,
+  RecentRepo,
   RepoStatus,
   RepoSummary,
 } from "./types";
@@ -46,7 +47,7 @@ export default function App() {
   const [config, setConfig] = useState<PagesConfig | null>(null);
   const [status, setStatus] = useState<RepoStatus | null>(null);
   const [view, setView] = useState<View>({ kind: "home" });
-  const [recents, setRecents] = useState<{ path: string }[]>([]);
+  const [recents, setRecents] = useState<RecentRepo[]>([]);
   const [rows, setRows] = useState<EntryRow[]>([]);
   const [message, setMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
