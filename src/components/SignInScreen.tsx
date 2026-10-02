@@ -75,6 +75,9 @@ export function SignInScreen({
       {/* Card elevada: panel es el oscuro-un-punto-más-claro del canvas. */}
       <div className="w-full max-w-[340px] space-y-6 rounded-2xl border border-line bg-panel p-8 shadow-2xl">
         <FolioBrand />
+        <p className="-mt-2 text-center text-sm text-ink-dim">
+          Sign in with GitHub to open your repositories.
+        </p>
 
         {!device ? (
           <button
