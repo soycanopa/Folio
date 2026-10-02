@@ -95,7 +95,9 @@ interface MediaViewProps {
 export function MediaView({ root, items, hasMediaInput, onUpload, onDelete, remote }: MediaViewProps) {
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 px-6 pt-5 pb-4">
+      <header
+        data-tauri-drag-region
+        className="flex items-center gap-3 px-6 pt-5 pb-4">
         <h1 className="text-xl font-semibold">Media</h1>
         <button
           onClick={onUpload}

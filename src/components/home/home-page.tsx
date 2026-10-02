@@ -52,7 +52,10 @@ export function HomePage({
   }, []);
 
   return (
-    <div className="max-w-screen-sm mx-auto p-4 md:p-6 space-y-8">
+    <div
+      data-tauri-drag-region
+      className="max-w-screen-sm mx-auto px-4 pt-12 pb-4 md:px-6 md:pt-14 md:pb-6 space-y-8"
+    >
       {user && user.accounts.length > 0 ? (
         <div className="min-h-[calc(100vh-12rem)] flex flex-col justify-center space-y-8">
           {hasRecentVisits && (

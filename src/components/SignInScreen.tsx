@@ -67,7 +67,10 @@ export function SignInScreen({
   }, [device]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4 md:p-6">
+    <div
+      data-tauri-drag-region
+      className="flex min-h-screen items-center justify-center p-4 md:p-6"
+    >
       <div className="w-full sm:max-w-[340px]">
         <div className="space-y-6">
           <h1 className="text-center text-lg font-medium tracking-tight">
