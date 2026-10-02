@@ -674,10 +674,11 @@ export default function App() {
       : null;
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full gap-2 p-2">
       <Sidebar
         summary={summary}
         status={status}
+        user={ghSession}
         collections={config?.content ?? []}
         selected={
           view.kind === "media"

@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid } from "lucide-react";
 import { PagesMark } from "./PagesMark";
-import type { ContentItem, RepoStatus, RepoSummary } from "../types";
+import type { ContentItem, GithubUser, RepoStatus, RepoSummary } from "../types";
 
 interface SidebarProps {
   summary: RepoSummary;
   status: RepoStatus | null;
+  /** Sesión de GitHub: su foto y login en el pie, como el footer de su sidebar. */
+  user: GithubUser | null;
   collections: ContentItem[];
   selected: string | null;
   onSelect: (c: ContentItem) => void;
@@ -20,6 +22,7 @@ interface SidebarProps {
 export function Sidebar({
   summary,
   status,
+  user,
   collections,
   selected,
   onSelect,
@@ -34,11 +37,10 @@ export function Sidebar({
   const repoName = remote
     ? (summary.owner_repo?.split("/").pop() ?? "repo")
     : (summary.root.split("/").filter(Boolean).pop() ?? "repo");
-  const dirty = status?.dirty ?? false;
 
   return (
     <aside
-      className="flex h-full w-56 shrink-0 flex-col bg-panel border-r border-line"
+      className="flex h-full w-56 shrink-0 flex-col overflow-hidden rounded-2xl bg-sidebar"
     >
       <div className="relative mx-2 mt-2 flex items-center gap-3 rounded-lg px-3 py-3">
         <button
@@ -119,7 +121,7 @@ export function Sidebar({
               <button
                 onClick={() => onSelect(c)}
                 className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
-                  selected === c.name ? "bg-raised" : "hover:bg-raised/40"
+                  selected === c.name ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/40"
                 }`}
               >
                 {c.kind === "file" ? (
@@ -137,7 +139,7 @@ export function Sidebar({
           <button
             onClick={onCanvas}
             className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
-              selected === "__canvas__" ? "bg-raised" : "hover:bg-raised/40"
+              selected === "__canvas__" ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/40"
             }`}
           >
             <LayoutGrid size={15} className="shrink-0 text-ink-dim" />
@@ -151,7 +153,7 @@ export function Sidebar({
         <button
           onClick={onMedia}
           className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
-            selected === "__media__" ? "bg-raised" : "hover:bg-raised/40"
+            selected === "__media__" ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/40"
           }`}
         >
           <Image size={15} className="shrink-0 text-ink-dim" />
@@ -159,20 +161,18 @@ export function Sidebar({
         </button>
       </nav>
 
-      <div className="flex items-center gap-2.5 border-t border-line px-4 py-3">
-        <span className="relative flex h-7 w-7 items-center justify-center rounded-full bg-raised text-xs font-medium">
-          F
-          <span
-            className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-panel ${
-              dirty ? "bg-amber-400" : "bg-primary"
-            }`}
-            title={dirty ? "Uncommitted changes" : "Clean"}
+      {user && (
+        <div className="flex items-center gap-2.5 border-t border-line px-4 py-3">
+          <img
+            src={`https://github.com/${user.login}.png`}
+            alt={user.login}
+            className="h-7 w-7 rounded-full"
           />
-        </span>
-        <span className="text-xs text-ink-dim">
-          {dirty ? "Uncommitted changes" : "Clean"}
-        </span>
-      </div>
+          <span className="truncate text-xs font-medium text-ink">
+            {user.login}
+          </span>
+        </div>
+      )}
     </aside>
   );
 }
