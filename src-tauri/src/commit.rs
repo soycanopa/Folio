@@ -1,10 +1,15 @@
-use crate::state::{AppState, RepoState};
+use crate::state::{AppState, Project, RepoState};
 
 #[tauri::command]
 pub fn commit(state: tauri::State<'_, AppState>, message: &str) -> Result<String, String> {
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    commit_touched(st, message)
+    match guard.as_mut().ok_or("no hay proyecto abierto")? {
+        Project::Local(st) => commit_touched(st, message),
+        Project::Remote(_) => Err(
+            "commit es de proyectos locales; en remoto cada save publica su commit en la rama"
+                .to_string(),
+        ),
+    }
 }
 
 /// Commit que stagea solo los paths que Folio tocó en la sesión

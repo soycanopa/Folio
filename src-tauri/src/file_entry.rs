@@ -4,7 +4,7 @@ use serde_yaml_ng::Value;
 
 use crate::{
     entry::{ensure_writable, read_entry_at, safe_join, write_entry_tracked, EntryContent},
-    state::{AppState, RepoState},
+    state::{AppState, Project, RepoState},
 };
 
 // Entradas `type: file` del config: un único archivo sin tabla.
@@ -39,6 +39,39 @@ pub fn read_file_entry_at(root: &Path, path: &str) -> Result<EntryContent, Strin
     }
 }
 
+/// JSON pretty + salto de línea final: el texto que se escribe al
+/// disco local o se publica por PUT.
+pub(crate) fn json_entry_text(data: &Value) -> Result<String, String> {
+    let json = serde_json::to_value(data).map_err(|e| format!("serializar: {e}"))?;
+    let mut out = serde_json::to_string_pretty(&json).map_err(|e| format!("serializar: {e}"))?;
+    out.push('\n');
+    Ok(out)
+}
+
+/// Contenido de texto de un file entry según su extensión (lo que va
+/// al disco o al PUT).
+pub(crate) fn file_entry_text(
+    path: &str,
+    data: &Value,
+    body: &str,
+) -> Result<String, String> {
+    match extension(path).as_str() {
+        "json" => json_entry_text(data),
+        "md" => {
+            let fm = match data {
+                Value::Mapping(m) => m.clone(),
+                other => {
+                    return Err(format!("front matter: se espera un objeto, llegó {other:?}"))
+                }
+            };
+            crate::entry::serialize_entry(&fm, body)
+        }
+        other => Err(format!(
+            "formato de file entry no soportado: .{other} (v1: json y md)"
+        )),
+    }
+}
+
 pub fn write_file_entry_tracked(
     st: &mut RepoState,
     path: &str,
@@ -50,11 +83,7 @@ pub fn write_file_entry_tracked(
             // El write de un file entry también queda dentro de los paths
             // del config (invariante de AGENTS.md).
             ensure_writable(st, path)?;
-            let json = serde_json::to_value(&data)
-                .map_err(|e| format!("serializar {path}: {e}"))?;
-            let mut out = serde_json::to_string_pretty(&json)
-                .map_err(|e| format!("serializar {path}: {e}"))?;
-            out.push('\n');
+            let out = json_entry_text(&data)?;
             let full = safe_join(&st.root, path)?;
             fs::write(&full, out).map_err(|e| format!("escribir {path}: {e}"))?;
             let rel = std::path::PathBuf::from(path);
@@ -71,25 +100,129 @@ pub fn write_file_entry_tracked(
 }
 
 #[tauri::command]
-pub fn read_file_entry(
+pub async fn read_file_entry(
     state: tauri::State<'_, AppState>,
-    path: &str,
+    path: String,
 ) -> Result<EntryContent, String> {
-    let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    read_file_entry_at(&st.root, path)
+    let ctx = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return read_file_entry_at(&st.root, &path),
+            Project::Remote(rs) => {
+                if let Some(f) = rs.files.get(&path) {
+                    return parse_file_entry_text(&path, &f.text);
+                }
+                crate::remote::remote_ctx(rs)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let (t, c, p) = (token.clone(), ctx.clone(), path.clone());
+    let (text, sha) = tauri::async_runtime::spawn_blocking(move || {
+        crate::remote::fetch_text(&t, &c, &p)
+    })
+    .await
+    .map_err(|e| format!("leer file entry: {e}"))??;
+    let out = parse_file_entry_text(&path, &text)?;
+    let mut guard = state.lock().unwrap();
+    if let Some(Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.files.insert(path, crate::state::RemoteFile { sha, text });
+        }
+    }
+    Ok(out)
+}
+
+/// Un archivo de file entry en texto → EntryContent (json → objeto
+/// completo; md → front matter + cuerpo).
+pub(crate) fn parse_file_entry_text(path: &str, raw: &str) -> Result<EntryContent, String> {
+    match extension(path).as_str() {
+        "json" => {
+            let json: serde_json::Value =
+                serde_json::from_str(raw).map_err(|e| format!("{path}: {e}"))?;
+            let data: Value = serde_json::from_value(json)
+                .map_err(|e| format!("{path}: no es un objeto: {e}"))?;
+            Ok(EntryContent {
+                frontmatter: data,
+                body: String::new(),
+            })
+        }
+        "md" => {
+            let (fm, body) = crate::entry::parse_entry(raw)?;
+            Ok(EntryContent {
+                frontmatter: Value::Mapping(fm),
+                body,
+            })
+        }
+        other => Err(format!(
+            "formato de file entry no soportado: .{other} (v1: json y md)"
+        )),
+    }
 }
 
 #[tauri::command]
-pub fn write_file_entry(
+pub async fn write_file_entry(
     state: tauri::State<'_, AppState>,
-    path: &str,
+    path: String,
     frontmatter: Value,
-    body: &str,
+    body: String,
 ) -> Result<String, String> {
+    let content = file_entry_text(&path, &frontmatter, &body)?;
+    let (ctx, cfg, item, sha) = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => {
+                return write_file_entry_tracked(st, &path, frontmatter, &body)
+            }
+            Project::Remote(rs) => {
+                let cfg = rs
+                    .config
+                    .clone()
+                    .ok_or("sin .pages.yml: no se puede validar el destino del write")?;
+                crate::entry::ensure_writable_config(&cfg, &path)?;
+                let item = crate::entry::owning_item(&cfg, &path).cloned();
+                let sha = rs.files.get(&path).map(|f| f.sha.clone());
+                (crate::remote::remote_ctx(rs), cfg, item, sha)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let login = crate::remote::current_session()?.login;
+    let (t, c, cfg2, item2, p, text) = (
+        token.clone(),
+        ctx.clone(),
+        Some(cfg.clone()),
+        item.clone(),
+        path.clone(),
+        content.clone(),
+    );
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        crate::remote::put_text_file(
+            &t,
+            &c,
+            cfg2.as_ref(),
+            item2.as_ref(),
+            &login,
+            &p,
+            &text,
+            sha.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("guardar file entry: {e}"))??;
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    write_file_entry_tracked(st, path, frontmatter, body)
+    if let Some(Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.files.insert(
+                outcome.path.clone(),
+                crate::state::RemoteFile {
+                    sha: outcome.sha,
+                    text: content,
+                },
+            );
+        }
+    }
+    Ok(outcome.path)
 }
 
 #[cfg(test)]

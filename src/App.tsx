@@ -24,10 +24,11 @@ import {
   CommitDialog,
   DiscardDialog,
   NewEntryDialog,
+  OpenModeDialog,
 } from "./components/Dialogs";
 import { MediaView } from "./components/Media";
 import { HomePage } from "./components/home/home-page";
-import { trackVisit } from "./lib/tracker";
+import { getVisits, trackVisit } from "./lib/tracker";
 import { toast } from "sonner";
 import { SignInScreen } from "./components/SignInScreen";
 
@@ -43,6 +44,27 @@ type View =
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
+// El mensaje de su server al guardar, incluido el aviso de auto-rename.
+function savedMessage(path: string, savedAs: string): string {
+  return savedAs !== path
+    ? `File "${path}" saved successfully but renamed to "${savedAs}" to avoid naming conflict.`
+    : `File "${path}" saved successfully.`;
+}
+
+// sonner tipa toast.promise como Promise | { unwrap } según versión.
+async function toastPromise<T>(
+  p: Promise<T>,
+  msgs: {
+    loading: string;
+    success: (v: T) => string;
+    error: (e: unknown) => string;
+  },
+): Promise<T> {
+  const t = toast.promise(p, msgs);
+  if (t instanceof Promise) return t;
+  return t.unwrap();
+}
+
 const snap = (d: { fm: Record<string, unknown>; body: string }) =>
   JSON.stringify({ fm: d.fm, body: d.body });
 
@@ -57,6 +79,12 @@ export default function App() {
   const [commitOpen, setCommitOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  /** Repo elegido esperando la pregunta local-vs-remoto. */
+  const [openModeFor, setOpenModeFor] = useState<{
+    owner: string;
+    repo: string;
+    branch: string;
+  } | null>(null);
   const [mediaItems, setMediaItems] = useState<MediaRef[]>([]);
   /** Navegación bloqueada por cambios sin guardar: run() al resolver. */
   const [guard, setGuard] = useState<null | "close" | { run: () => void }>(
@@ -72,8 +100,13 @@ export default function App() {
 
   const viewRef = useRef(view);
   viewRef.current = view;
+  const summaryRef = useRef(summary);
+  summaryRef.current = summary;
 
   const refreshStatus = useCallback(() => {
+    // Remoto: cada save publica su commit en la rama; no hay working
+    // tree ni upstream de los que informar.
+    if (summaryRef.current?.mode === "remote") return;
     api.repoStatus().then(setStatus).catch((e) => setMessage(String(e)));
   }, []);
 
@@ -109,12 +142,21 @@ export default function App() {
         title: "Choose files",
       });
       if (!Array.isArray(files) || files.length === 0) return null;
+      const remote = summaryRef.current?.mode === "remote";
       let last: MediaRef | null = null;
       for (const f of files) {
-        last = await api.importMedia(f);
+        // Remoto: cada archivo publica su commit — un toast por archivo,
+        // como su media-upload.
+        last = remote
+          ? await toastPromise(api.importMedia(f), {
+              loading: `Uploading ${f.split("/").pop()}`,
+              success: (m: MediaRef) => `Uploaded ${m.name}`,
+              error: (e: unknown) => String(e),
+            })
+          : await api.importMedia(f);
       }
       await loadMedia();
-      setMessage(`Imported ${files.length} file(s)`);
+      if (!remote) setMessage(`Imported ${files.length} file(s)`);
       return last;
     } catch (e) {
       setMessage(String(e));
@@ -128,7 +170,10 @@ export default function App() {
         await api.deleteMedia(m.path);
         await loadMedia();
         refreshStatus();
-        setMessage(`Deleted ${m.path} — commit to apply`);
+        const remote = summaryRef.current?.mode === "remote";
+        setMessage(
+          remote ? `Deleted ${m.path}` : `Deleted ${m.path} — commit to apply`,
+        );
       } catch (e) {
         setMessage(String(e));
       }
@@ -334,36 +379,59 @@ export default function App() {
 
   const save = useCallback(async () => {
     const v = viewRef.current;
+    const remote = summaryRef.current?.mode === "remote";
     if (v.kind === "canvas") {
+      const persist = api.writeFileEntry(
+        canvasPath,
+        canvasLayout as unknown as Record<string, unknown>,
+        "",
+      );
       try {
-        await api.writeFileEntry(
-          canvasPath,
-          canvasLayout as unknown as Record<string, unknown>,
-          "",
-        );
+        // Remoto: Save publica directo en la rama (decisión del dueño);
+        // toast como su entry.tsx ("Saving your file" → mensaje del save).
+        const path = remote
+          ? await toastPromise(persist, {
+              loading: "Saving your file",
+              success: (p: string) => savedMessage(canvasPath, p),
+              error: (e: unknown) => String(e),
+            })
+          : await persist;
         setCanvasSnapshot(JSON.stringify(canvasLayout));
-        refreshStatus();
-        setMessage(`Saved ${canvasPath}`);
+        if (path !== canvasPath) setCanvasPath(path);
+        if (!remote) refreshStatus();
+        else setMessage("");
       } catch (e) {
         setMessage(String(e));
       }
       return;
     }
     if (v.kind !== "entry") return;
+    const persist =
+      v.collection.kind === "file"
+        ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
+        : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
     try {
-      const persist =
-        v.collection.kind === "file"
-          ? api.writeFileEntry(v.draft.path, v.draft.fm, v.draft.body)
-          : api.writeEntry(v.draft.path, v.draft.fm, v.draft.body);
-      await persist;
+      const path = remote
+        ? await toastPromise(persist, {
+            loading: "Saving your file",
+            success: (p: string) => savedMessage(v.draft.path, p),
+            error: (e: unknown) => String(e),
+          })
+        : await persist;
       setView({
         kind: "entry",
         collection: v.collection,
-        draft: { ...v.draft, isNew: false, snapshot: snap(v.draft) },
+        // El auto-rename del 422 puede cambiar el path final.
+        draft: { ...v.draft, path, isNew: false, snapshot: snap(v.draft) },
       });
-      refreshStatus();
-      if (v.draft.isNew) await loadRows(v.collection);
-      setMessage(`Saved ${v.draft.path}`);
+      if (remote) {
+        void loadRows(v.collection);
+        setMessage("");
+      } else {
+        refreshStatus();
+        if (v.draft.isNew) await loadRows(v.collection);
+        setMessage(`Saved ${path}`);
+      }
     } catch (e) {
       setMessage(String(e));
     }
@@ -396,9 +464,52 @@ export default function App() {
     }
   }, []);
 
-  // El Open de su home: clona en la carpeta que elijas y registra la
-  // visita como su tracker.
+  // Proyecto remoto: sin carpeta, rama por defecto, edición contra la
+  // API de GitHub (AGENTS.md). El Save publica directo en la rama.
+  const openRemoteRepoFlow = useCallback(
+    async (owner: string, repo: string) => {
+      try {
+        const s = await api.openRemoteRepo(owner, repo);
+        setSummary(s);
+        trackVisit(owner, repo, s.branch, "remote");
+        setStatus(null);
+        setView({ kind: "empty" });
+        setRows([]);
+        if (!s.has_config) {
+          setConfig(null);
+          return;
+        }
+        const cfg = await api.readConfig();
+        setConfig(cfg);
+        void loadMedia();
+        if (cfg.content.length > 0) selectCollection(cfg.content[0]);
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [loadMedia, selectCollection],
+  );
+
+  // El Open de su home pregunta local (clona en la carpeta que elijas)
+  // o remoto (como la web, sin clonar) — salvo que el tracker ya sepa
+  // cómo se abrió antes: los recientes reabren directo.
   const handleOpenRepo = useCallback(
+    (visit: { owner: string; repo: string; branch: string }) => {
+      const known = getVisits().find(
+        (v) =>
+          v.owner.toLowerCase() === visit.owner.toLowerCase() &&
+          v.repo.toLowerCase() === visit.repo.toLowerCase(),
+      );
+      if (known?.mode === "remote") {
+        void openRemoteRepoFlow(visit.owner, visit.repo);
+        return;
+      }
+      setOpenModeFor(visit);
+    },
+    [openRemoteRepoFlow],
+  );
+
+  const cloneVisit = useCallback(
     async (visit: { owner: string; repo: string; branch: string }) => {
       try {
         const dest = await openFolderDialog({
@@ -411,7 +522,7 @@ export default function App() {
           `https://github.com/${visit.owner}/${visit.repo}.git`,
           target,
         );
-        trackVisit(visit.owner, visit.repo, visit.branch);
+        trackVisit(visit.owner, visit.repo, visit.branch, "local");
         await openRepoFlow(target);
       } catch (e) {
         setMessage(String(e));
@@ -459,6 +570,7 @@ export default function App() {
   }, []);
 
   const push = useCallback(async () => {
+    if (summaryRef.current?.mode === "remote") return;
     try {
       const ok = await confirm("Push the current branch to its upstream?", {
         title: "Folio",
@@ -551,7 +663,11 @@ export default function App() {
 
       <main className="relative flex min-w-0 flex-1 flex-col">
         {!config ? (
-          <EmptyConfig summary={summary} onPick={pickFolder} />
+          <EmptyConfig
+            summary={summary}
+            remote={summary.mode === "remote"}
+            onPick={summary.mode === "remote" ? goHome : pickFolder}
+          />
         ) : view.kind === "home" ? (
           <HomePage
             user={homeUser}
@@ -578,6 +694,7 @@ export default function App() {
           <Canvas
             collection={view.collection}
             root={summary.root}
+            remote={summary.mode === "remote"}
             mediaInput={config?.media.input ?? null}
             cards={canvasRows}
             layout={canvasLayout ?? DEFAULT_LAYOUT}
@@ -588,12 +705,13 @@ export default function App() {
               void openEntry(view.collection, path);
             }}
             onSave={() => void save()}
-            onCommit={() => setCommitOpen(true)}
-            onPush={() => void push()}
+            onCommit={summary.mode === "local" ? () => setCommitOpen(true) : undefined}
+            onPush={summary.mode === "local" ? () => void push() : undefined}
           />
         ) : view.kind === "media" ? (
           <MediaView
             root={summary.root}
+            remote={summary.mode === "remote"}
             items={mediaItems}
             hasMediaInput={Boolean(config?.media.input)}
             onUpload={() => void uploadMedia()}
@@ -604,6 +722,7 @@ export default function App() {
             collection={view.collection}
             draft={view.draft}
             dirty={dirty}
+            remote={summary.mode === "remote"}
             onFmChange={(name, value) =>
               setView((v) =>
                 v.kind === "entry"
@@ -625,15 +744,19 @@ export default function App() {
               )
             }
             onSave={() => void save()}
-            onCommit={() => setCommitOpen(true)}
-            onPush={() => void push()}
+            onCommit={summary.mode === "local" ? () => setCommitOpen(true) : undefined}
+            onPush={summary.mode === "local" ? () => void push() : undefined}
             onRename={async (newName) => {
               const v = viewRef.current;
               if (v.kind !== "entry") return;
               try {
                 const newPath = await api.renameEntry(v.draft.path, newName);
                 refreshStatus();
-                setMessage(`Renamed to ${newName} — commit to apply`);
+                setMessage(
+                  summary.mode === "remote"
+                    ? `Renamed to ${newName}`
+                    : `Renamed to ${newName} — commit to apply`,
+                );
                 await openEntry(v.collection, newPath);
               } catch (e) {
                 setMessage(String(e));
@@ -645,7 +768,11 @@ export default function App() {
               try {
                 await api.deleteEntry(v.draft.path);
                 refreshStatus();
-                setMessage(`Deleted ${v.draft.path} — commit to apply`);
+                setMessage(
+                  summary.mode === "remote"
+                    ? `Deleted ${v.draft.path}`
+                    : `Deleted ${v.draft.path} — commit to apply`,
+                );
                 selectCollection(v.collection);
               } catch (e) {
                 setMessage(String(e));
@@ -669,7 +796,13 @@ export default function App() {
             Select a collection.
           </div>
         )}
-        <StatusBar message={message} status={status} config={config} />
+        <StatusBar
+          message={message}
+          status={status}
+          config={config}
+          summary={summary}
+          dirty={dirty}
+        />
       </main>
 
       {guard && (
@@ -720,6 +853,24 @@ export default function App() {
         />
       )}
 
+      {openModeFor && (
+        <OpenModeDialog
+          owner={openModeFor.owner}
+          repo={openModeFor.repo}
+          onClose={() => setOpenModeFor(null)}
+          onLocal={() => {
+            const v = openModeFor;
+            setOpenModeFor(null);
+            void cloneVisit(v);
+          }}
+          onRemote={() => {
+            const v = openModeFor;
+            setOpenModeFor(null);
+            void openRemoteRepoFlow(v.owner, v.repo);
+          }}
+        />
+      )}
+
       {cloneOpen && (
         <CloneDialog
           onClose={() => setCloneOpen(false)}
@@ -751,9 +902,12 @@ export default function App() {
 
 function EmptyConfig({
   summary,
+  remote,
   onPick,
 }: {
   summary: RepoSummary;
+  /** Remoto: el botón vuelve al home; no hay carpeta que elegir. */
+  remote?: boolean;
   onPick: () => void;
 }) {
   return (
@@ -761,13 +915,13 @@ function EmptyConfig({
       <h1 className="text-lg font-semibold">No content configuration</h1>
       <p className="max-w-md text-center text-sm text-ink-dim">
         {summary.config_error ??
-          "This repository has no .pages.yml at its root. Folio reads that file to build its forms, like Pages CMS does."}
+          `This repository has no .pages.yml at its root. Folio reads that file to build its forms, like Pages CMS does.`}
       </p>
       <button
         onClick={onPick}
         className="mt-2 rounded-lg border border-line px-4 py-2 text-sm hover:bg-panel"
       >
-        Choose another folder
+        {remote ? "Choose another repository" : "Choose another folder"}
       </button>
     </div>
   );
@@ -777,21 +931,36 @@ function StatusBar({
   message,
   status,
   config,
+  summary,
+  dirty,
 }: {
   message: string;
   status: RepoStatus | null;
   config: PagesConfig | null;
+  summary: RepoSummary;
+  dirty: boolean;
 }) {
+  const remote = summary.mode === "remote";
   return (
     <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-panel/60 px-4 text-[11px] text-ink-dim">
-      {status && (
+      {remote ? (
         <>
-          <span>{status.branch}</span>
-          {status.dirty && <span className="text-amber-400">● uncommitted</span>}
-          {status.ahead > 0 && <span>↑{status.ahead} to push</span>}
-          {status.behind > 0 && <span>↓{status.behind} to pull</span>}
-          {!status.has_upstream && <span>no upstream</span>}
+          <span className="text-ink">{summary.branch}</span>
+          <span className="text-sky-400">◆ GitHub (remote)</span>
+          {dirty && <span className="text-amber-400">● unsaved</span>}
         </>
+      ) : (
+        status && (
+          <>
+            <span>{status.branch}</span>
+            {status.dirty && (
+              <span className="text-amber-400">● uncommitted</span>
+            )}
+            {status.ahead > 0 && <span>↑{status.ahead} to push</span>}
+            {status.behind > 0 && <span>↓{status.behind} to pull</span>}
+            {!status.has_upstream && <span>no upstream</span>}
+          </>
+        )
       )}
       {config && config.warnings.length > 0 && (
         <span title={config.warnings.join("\n")}>

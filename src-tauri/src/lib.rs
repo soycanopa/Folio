@@ -1,12 +1,15 @@
 pub mod commit;
+pub mod commit_message;
 pub mod config;
 pub mod entry;
 pub mod file_entry;
+pub mod gh_api;
 pub mod github;
 pub mod history;
 pub mod media;
 pub mod push;
 pub mod recent;
+pub mod remote;
 pub mod repo;
 pub mod state;
 
@@ -21,6 +24,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             repo::open_repo,
             repo::clone_repo,
+            remote::open_remote_repo,
+            remote::remote_media_url,
             repo::repo_status,
             repo::list_entries,
             config::read_config,
@@ -39,6 +44,7 @@ pub fn run() {
             github::github_session,
             github::github_logout,
             github::github_list_repos,
+            github::github_create_from_template,
             recent::list_recent_repos,
             recent::add_recent_repo,
             recent::remove_recent_repo,

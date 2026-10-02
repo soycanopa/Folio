@@ -21,6 +21,7 @@ If your site treats content as files (Markdown + front matter, images, a `.pages
 ## Features
 
 - **Projects home** — sign in with GitHub (OAuth Device Flow, token in the macOS Keychain) to see your recently updated repositories, browse them, clone in one click, or open a local folder. Includes *Create from a template* (Next.js / Astro / Eleventy blog templates).
+- **Remote projects (v0.4)** — open any repo *without cloning*, exactly like the Pages CMS web app: read collections through the GitHub API (GraphQL tree per folder), and **Save publishes straight to the branch** — one file, one commit, with the platform's commit-message templates (`settings.commit.templates`), 409/422 conflict handling and auto-rename. Media uploads publish immediately; private-repo previews are proxied through the core (the token never reaches the webview).
 - **Collections from `.pages.yml`** — the sidebar, forms, table columns and validation come from your config, like the platform does. Unknown front-matter fields survive every save.
 - **The real Pages CMS editor** — the actual `components/ui/editor` from [Pages CMS](https://github.com/hunvreus/pagescms) (MIT), ported: bubble menu, slash commands (`/`), GFM tables, links, image alt text, Markdown input/output.
 - **Media library** — upload any file into `media.input` (respecting `rename: false | safe | random`), pick images from any `image` field, copy public paths, delete.
@@ -33,7 +34,7 @@ If your site treats content as files (Markdown + front matter, images, a `.pages
 
 - Rust owns the disk and git; the webview only invokes commands.
 - Content writes must resolve inside `content[].path` or `media.input` — anything else is rejected.
-- Commits stage only paths Folio touched in the session.
+- Commits stage only paths Folio touched in the session; in remote mode every PUT/DELETE publishes exactly the path Folio touched.
 - No tokens in plain files: the GitHub session lives in the macOS Keychain (ACL-scoped to the binary). Push uses the system git credentials.
 
 ## Install & run
@@ -54,7 +55,7 @@ Tauri 2 (Rust core) · React + TypeScript + Vite · Tailwind CSS v4 · shadcn/ui
 
 ```text
 folio/
-  src-tauri/          Rust core: commands, git, .pages.yml parser, media, GitHub session
+  src-tauri/          Rust core: commands, git, .pages.yml parser, media, GitHub session, GitHub API client (remote mode)
   src/                React app: home, sidebar, table, forms, editor port
   third_party/NOTICE  MIT attribution of everything ported from Pages CMS
   fixtures/blog/      minimal repo for the test-suite

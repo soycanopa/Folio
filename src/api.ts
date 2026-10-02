@@ -3,6 +3,7 @@ import type {
   EntryContent,
   EntryRef,
   MediaRef,
+  MediaSrc,
   NewEntry,
   PagesConfig,
   RepoStatus,
@@ -15,6 +16,10 @@ export const api = {
     invoke<RepoSummary>("open_repo", { path }),
   cloneRepo: (url: string, dest: string) =>
     invoke<RepoSummary>("clone_repo", { url, dest }),
+  openRemoteRepo: (owner: string, repo: string) =>
+    invoke<RepoSummary>("open_remote_repo", { owner, repo }),
+  remoteMediaUrl: (path: string) =>
+    invoke<MediaSrc>("remote_media_url", { path }),
   repoStatus: () => invoke<RepoStatus>("repo_status"),
   readConfig: () => invoke<PagesConfig>("read_config"),
   listEntries: (collection: string) =>

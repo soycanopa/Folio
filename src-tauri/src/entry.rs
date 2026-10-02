@@ -6,7 +6,7 @@ use std::{
 use serde::Serialize;
 use serde_yaml_ng::{Mapping, Value};
 
-use crate::state::{AppState, RepoState};
+use crate::state::{AppState, Project, RepoState};
 
 #[derive(Serialize)]
 pub struct EntryContent {
@@ -79,11 +79,7 @@ pub fn read_entry_at(root: &Path, path: &str) -> Result<EntryContent, String> {
 // Invariante Folio: un write de contenido tiene que resolver dentro de
 // `content[].path` o `media.input` del `.pages.yml` (AGENTS.md). Sin
 // config parseada no hay contra qué validar, así que se rechaza.
-pub(crate) fn ensure_writable(st: &RepoState, rel: &str) -> Result<(), String> {
-    let cfg = st
-        .config
-        .as_ref()
-        .ok_or("sin .pages.yml: no se puede validar el destino del write")?;
+pub(crate) fn ensure_writable_config(cfg: &crate::config::PagesConfig, rel: &str) -> Result<(), String> {
     let rel_path = Path::new(rel);
     let in_collection = cfg
         .content
@@ -98,6 +94,14 @@ pub(crate) fn ensure_writable(st: &RepoState, rel: &str) -> Result<(), String> {
         return Err(format!("write fuera de las rutas del config: {rel}"));
     }
     Ok(())
+}
+
+pub(crate) fn ensure_writable(st: &RepoState, rel: &str) -> Result<(), String> {
+    let cfg = st
+        .config
+        .as_ref()
+        .ok_or("sin .pages.yml: no se puede validar el destino del write")?;
+    ensure_writable_config(cfg, rel)
 }
 
 /// Escribe la entrada y registra el path en `touched` para que el commit
@@ -133,17 +137,13 @@ pub struct NewEntry {
 }
 
 /// Resuelve el path de una entrada nueva (`filename` del config o
-/// `{slug}.md`). No escribe nada: si el archivo existe, no se pisa; la
-/// UI lo abre (FLOW.md). El primer Save lo materializa.
-pub fn create_entry_impl(
-    st: &RepoState,
+/// `{slug}.md`) a partir del config, sin tocar disco: lo comparten el
+/// modo local (existed contra el FS) y el remoto (GET).
+pub fn resolve_new_entry(
+    cfg: &crate::config::PagesConfig,
     collection: &str,
     slug: &str,
-) -> Result<NewEntry, String> {
-    let cfg = st
-        .config
-        .as_ref()
-        .ok_or("sin .pages.yml: no hay colecciones")?;
+) -> Result<String, String> {
     let item = cfg
         .content
         .iter()
@@ -164,7 +164,22 @@ pub fn create_entry_impl(
             "filename con placeholders que v0 no resuelve: {tpl} (solo {{slug}})"
         ));
     }
-    let rel = format!("{}/{}", item.path.trim_end_matches('/'), filename);
+    Ok(format!("{}/{}", item.path.trim_end_matches('/'), filename))
+}
+
+/// Resuelve el path de una entrada nueva (`filename` del config o
+/// `{slug}.md`). No escribe nada: si el archivo existe, no se pisa; la
+/// UI lo abre (FLOW.md). El primer Save lo materializa.
+pub fn create_entry_impl(
+    st: &RepoState,
+    collection: &str,
+    slug: &str,
+) -> Result<NewEntry, String> {
+    let cfg = st
+        .config
+        .as_ref()
+        .ok_or("sin .pages.yml: no hay colecciones")?;
+    let rel = resolve_new_entry(cfg, collection, slug)?;
     let full = safe_join(&st.root, &rel)?;
     Ok(NewEntry {
         path: rel,
@@ -173,14 +188,37 @@ pub fn create_entry_impl(
 }
 
 #[tauri::command]
-pub fn create_entry(
+pub async fn create_entry(
     state: tauri::State<'_, AppState>,
-    collection: &str,
-    slug: &str,
+    collection: String,
+    slug: String,
 ) -> Result<NewEntry, String> {
-    let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    create_entry_impl(st, collection, slug)
+    let (ctx, rel) = {
+        let guard = state.lock().unwrap();
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return create_entry_impl(st, &collection, &slug),
+            Project::Remote(rs) => {
+                let cfg = rs
+                    .config
+                    .as_ref()
+                    .ok_or("sin .pages.yml: no hay colecciones")?;
+                (crate::remote::remote_ctx(rs), resolve_new_entry(cfg, &collection, &slug)?)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let (t, c, r) = (token.clone(), ctx.clone(), rel.clone());
+    let existed = tauri::async_runtime::spawn_blocking(move || {
+        // 404 → no existe (igual que el is_file local).
+        match crate::gh_api::get_content(&t, &c.owner, &c.repo, &r, &c.branch) {
+            Ok(_) => Ok(true),
+            Err(e) if e.status == 404 => Ok(false),
+            Err(e) => Err(crate::remote::gh_error_ui(e)),
+        }
+    })
+    .await
+    .map_err(|e| format!("crear entrada: {e}"))??;
+    Ok(NewEntry { path: rel, existed })
 }
 
 /// Colección que contiene a `path`, según los paths del config.
@@ -188,14 +226,19 @@ fn owning_collection<'a>(
     st: &'a RepoState,
     path: &str,
 ) -> Result<&'a crate::config::ContentItem, String> {
-    let rel = Path::new(path);
-    st.config
-        .as_ref()
-        .ok_or("sin .pages.yml")?
-        .content
+    let cfg = st.config.as_ref().ok_or("sin .pages.yml")?;
+    owning_item(cfg, path).ok_or_else(|| format!("write fuera de las rutas del config: {path}"))
+}
+
+/// Ítem de content cuyo path contiene a `rel` (shared local/remoto).
+pub(crate) fn owning_item<'a>(
+    cfg: &'a crate::config::PagesConfig,
+    rel: &str,
+) -> Option<&'a crate::config::ContentItem> {
+    let rel_path = Path::new(rel);
+    cfg.content
         .iter()
-        .find(|c| rel.starts_with(Path::new(&c.path)))
-        .ok_or_else(|| format!("write fuera de las rutas del config: {path}"))
+        .find(|c| rel_path.starts_with(Path::new(&c.path)))
 }
 
 fn track(st: &mut RepoState, path: &str) {
@@ -260,41 +303,287 @@ pub fn delete_entry_impl(st: &mut RepoState, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validación de nombre compartida por local y remoto: archivo simple,
+/// sin rutas, sin punto inicial.
+pub(crate) fn valid_file_name(new_name: &str) -> Result<(), String> {
+    let name = Path::new(new_name);
+    if name.file_name().map(|n| n.to_string_lossy().to_string()).as_deref() != Some(new_name)
+        || new_name.contains('/')
+        || new_name.contains('\\')
+        || new_name.starts_with('.')
+    {
+        return Err(format!("nombre de archivo inválido: {new_name:?}"));
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub fn rename_entry(
+pub async fn rename_entry(
     state: tauri::State<'_, AppState>,
-    path: &str,
-    new_name: &str,
+    path: String,
+    new_name: String,
 ) -> Result<String, String> {
-    let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    rename_entry_impl(st, path, new_name)
+    let (ctx, cfg, item, path, new_rel, cached) = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return rename_entry_impl(st, &path, &new_name),
+            Project::Remote(rs) => {
+                let cfg = rs
+                    .config
+                    .clone()
+                    .ok_or("sin .pages.yml: no se puede validar el destino")?;
+                ensure_writable_config(&cfg, &path)?;
+                let item =
+                    owning_item(&cfg, &path).cloned().ok_or(format!(
+                        "write fuera de las rutas del config: {path}"
+                    ))?;
+                if !item.operations.rename {
+                    return Err(format!("la colección {} no permite renombrar", item.name));
+                }
+                valid_file_name(&new_name)?;
+                let parent = match path.rfind('/') {
+                    Some(i) => path[..i].to_string(),
+                    None => String::new(),
+                };
+                let new_rel = format!("{parent}/{new_name}");
+                ensure_writable_config(&cfg, &new_rel)?;
+                // El contenido cacheado viaja al path nuevo (el blob sha
+                // no cambia con un rename).
+                let cached = rs.files.get(&path).cloned();
+                (
+                    crate::remote::remote_ctx(rs),
+                    cfg,
+                    item,
+                    path.clone(),
+                    new_rel,
+                    cached,
+                )
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let login = crate::remote::current_session()?.login;
+    let (t, c, cfg2, item2, p, np) = (
+        token.clone(),
+        ctx.clone(),
+        Some(cfg.clone()),
+        Some(item.clone()),
+        path.clone(),
+        new_rel.clone(),
+    );
+    tauri::async_runtime::spawn_blocking(move || {
+        // No se pisa: el destino tiene que no existir y el origen sí.
+        match crate::gh_api::get_content(&t, &c.owner, &c.repo, &np, &c.branch) {
+            Err(e) if e.status == 404 => {}
+            Err(e) => return Err(crate::remote::gh_error_ui(e)),
+            Ok(_) => return Err(format!("ya existe {np}; no se pisa")),
+        }
+        match crate::gh_api::get_content(&t, &c.owner, &c.repo, &p, &c.branch) {
+            Err(e) if e.status == 404 => return Err(format!("no existe {p}")),
+            Err(e) => return Err(crate::remote::gh_error_ui(e)),
+            Ok(_) => {}
+        }
+        crate::remote::rename_file_remote(
+            &t,
+            &c,
+            cfg2.as_ref(),
+            item2.as_ref(),
+            &login,
+            &p,
+            &np,
+        )
+    })
+    .await
+    .map_err(|e| format!("renombrar: {e}"))??;
+    {
+        let mut guard = state.lock().unwrap();
+        if let Some(Project::Remote(rs)) = guard.as_mut() {
+            if crate::remote::is_same_remote(rs, &ctx) {
+                rs.files.remove(&path);
+                if let Some(f) = cached {
+                    rs.files.insert(new_rel.clone(), f);
+                }
+            }
+        }
+    }
+    Ok(new_rel)
 }
 
 #[tauri::command]
-pub fn delete_entry(state: tauri::State<'_, AppState>, path: &str) -> Result<(), String> {
-    let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    delete_entry_impl(st, path)
-}
-
-#[tauri::command]
-pub fn read_entry(state: tauri::State<'_, AppState>, path: &str) -> Result<EntryContent, String> {
-    let guard = state.lock().unwrap();
-    let st = guard.as_ref().ok_or("no hay repo abierto")?;
-    read_entry_at(&st.root, path)
-}
-
-#[tauri::command]
-pub fn write_entry(
+pub async fn delete_entry(
     state: tauri::State<'_, AppState>,
-    path: &str,
+    path: String,
+) -> Result<(), String> {
+    let (ctx, cfg, item, path, sha) = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return delete_entry_impl(st, &path),
+            Project::Remote(rs) => {
+                let cfg = rs
+                    .config
+                    .clone()
+                    .ok_or("sin .pages.yml: no se puede validar el destino")?;
+                ensure_writable_config(&cfg, &path)?;
+                let item = owning_item(&cfg, &path)
+                    .cloned()
+                    .ok_or_else(|| format!("write fuera de las rutas del config: {path}"))?;
+                if !item.operations.delete {
+                    return Err(format!("la colección {} no permite borrar", item.name));
+                }
+                let sha = rs.files.get(&path).map(|f| f.sha.clone());
+                (crate::remote::remote_ctx(rs), cfg, item, path.clone(), sha)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let login = crate::remote::current_session()?.login;
+    let (t, c, cfg2, item2, p, sha) = (
+        token.clone(),
+        ctx.clone(),
+        Some(cfg.clone()),
+        Some(item.clone()),
+        path.clone(),
+        sha,
+    );
+    tauri::async_runtime::spawn_blocking(move || {
+        let sha = match sha {
+            Some(s) => s,
+            None => match crate::gh_api::get_content(&t, &c.owner, &c.repo, &p, &c.branch) {
+                Ok(f) => f.sha,
+                Err(e) if e.status == 404 => return Err(format!("no existe {p}")),
+                Err(e) => return Err(crate::remote::gh_error_ui(e)),
+            },
+        };
+        crate::remote::delete_file_remote(&t, &c, cfg2.as_ref(), item2.as_ref(), &login, &p, &sha)
+    })
+    .await
+    .map_err(|e| format!("borrar entrada: {e}"))??;
+    let mut guard = state.lock().unwrap();
+    if let Some(Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.files.remove(&path);
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn read_entry(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<EntryContent, String> {
+    let ctx = {
+        let guard = state.lock().unwrap();
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return read_entry_at(&st.root, &path),
+            // Cache de sesión (la llena el GraphQL del list_entries):
+            // sin N+1 de red por fila.
+            Project::Remote(rs) => {
+                if let Some(f) = rs.files.get(&path) {
+                    let (fm, body) = parse_entry(&f.text)?;
+                    return Ok(EntryContent {
+                        frontmatter: Value::Mapping(fm),
+                        body,
+                    });
+                }
+                crate::remote::remote_ctx(rs)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let (t, c, p) = (token.clone(), ctx.clone(), path.clone());
+    let (text, sha) = tauri::async_runtime::spawn_blocking(move || {
+        crate::remote::fetch_text(&t, &c, &p)
+    })
+    .await
+    .map_err(|e| format!("leer entrada: {e}"))??;
+    let (fm, body) = parse_entry(&text)?;
+    let mut guard = state.lock().unwrap();
+    if let Some(Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.files.insert(
+                path,
+                crate::state::RemoteFile { sha, text },
+            );
+        }
+    }
+    Ok(EntryContent {
+        frontmatter: Value::Mapping(fm),
+        body,
+    })
+}
+
+#[tauri::command]
+pub async fn write_entry(
+    state: tauri::State<'_, AppState>,
+    path: String,
     frontmatter: Value,
-    body: &str,
+    body: String,
 ) -> Result<String, String> {
+    let fm = match frontmatter {
+        Value::Mapping(m) => m,
+        other => return Err(format!("front matter: se espera un objeto, llegó {other:?}")),
+    };
+    let content = serialize_entry(&fm, &body)?;
+    let (ctx, cfg, item, sha) = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => {
+                return write_entry_tracked(st, &path, Value::Mapping(fm), &body)
+            }
+            Project::Remote(rs) => {
+                let cfg = rs
+                    .config
+                    .clone()
+                    .ok_or("sin .pages.yml: no se puede validar el destino del write")?;
+                ensure_writable_config(&cfg, &path)?;
+                let item = owning_item(&cfg, &path).cloned();
+                let sha = rs.files.get(&path).map(|f| f.sha.clone());
+                (crate::remote::remote_ctx(rs), cfg, item, sha)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let login = crate::remote::current_session()?.login;
+    let (t, c, cfg2, item2, p, text) = (
+        token.clone(),
+        ctx.clone(),
+        Some(cfg.clone()),
+        item.clone(),
+        path.clone(),
+        content.clone(),
+    );
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        crate::remote::put_text_file(
+            &t,
+            &c,
+            cfg2.as_ref(),
+            item2.as_ref(),
+            &login,
+            &p,
+            &text,
+            sha.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| format!("guardar entrada: {e}"))??;
+    if outcome.renamed {
+        // Aviso con el copy de la web; el path final viaja en el return.
+        eprintln!("folio: renombrado a {} por conflicto de nombre", outcome.path);
+    }
     let mut guard = state.lock().unwrap();
-    let st = guard.as_mut().ok_or("no hay repo abierto")?;
-    write_entry_tracked(st, path, frontmatter, body)
+    if let Some(Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.files.insert(
+                outcome.path.clone(),
+                crate::state::RemoteFile {
+                    sha: outcome.sha,
+                    text: content,
+                },
+            );
+        }
+    }
+    Ok(outcome.path)
 }
 
 #[cfg(test)]

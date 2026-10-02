@@ -61,8 +61,10 @@ Leídas a la mala; no vuelvas a pisarlas:
 - **pnpm no expone transitivos**: si un archivo importado vive solo como dependencia de otro paquete (p.ej. `@tiptap/core`), agrégalo como dependencia directa.
 - **`serde_yaml` está archivado**; se usa `serde_yaml_ng`. El storage de TipTap no viene tipado para v3: acceso acotado con cast documentado.
 - **git2 sin transports** (`default-features = false`): clone y push van por el `git` del sistema. `Index::add_path` stagea el archivo completo e ignora gitignore; el commit escribe el index a disco antes de crear el commit (como `git add` real).
-- **El scope del asset protocol se amplía en runtime** solo a la carpeta del repo abierto (`app.asset_protocol_scope().allow_directory`); las miniaturas del webview van por `convertFileSrc`.
+- **El scope del asset protocol se amplía en runtime** solo a la carpeta del repo abierto (`app.asset_protocol_scope().allow_directory`); las miniaturas del webview van por `convertFileSrc`. En remoto también se amplía a `{app_cache_dir}/remote-media` (caché de previews privadas, clave sha).
 - **El keyring crate genera prompts en dev** (cada rebuild cambia el binario). Por eso la sesión usa el CLI `security` con ACL; no lo "simplifiques" de vuelta.
+- **Los comandos síncronos de Tauri corren en el main thread** (doc "Calling Rust"): cualquier comando que dispatchea a red es `async fn` con args owned y la red en `tauri::async_runtime::spawn_blocking`; el lock del `AppState` nunca cruza un await (clonar datos → red → re-lock comprobando que el proyecto remoto siga siendo el mismo).
+- **`Error::StatusCode` de ureq 3 no expone el body** (ahí vive el `message` de GitHub del 409/422): `gh_api` construye su agente con `http_status_as_error(false)` y lee el status a mano. Además ureq **nunca reenvía `Authorization` tras un redirect** (default `Never`): la descarga de media privada persigue redirects a mano, solo a hosts `github.com`/`*.githubusercontent.com`.
 
 ## Pages CMS **[Folio]**
 
@@ -73,10 +75,14 @@ Excepción a "referencias: ideas sí, código no": su repo es MIT y la regla de 
 ```text
 src-tauri/src/     core: repo.rs (open/status/clone), config.rs (.pages.yml),
                    entry.rs, file_entry.rs, commit.rs, push.rs, media.rs,
-                   history.rs, github.rs (Device Flow + Keychain), recent.rs
+                   history.rs, github.rs (Device Flow + Keychain), recent.rs,
+                   gh_api.rs (cliente REST/GraphQL de GitHub), remote.rs
+                   (modo remoto: save/auto-rename/rename Git Data/proxy de
+                   previews), commit_message.rs (plantillas del remoto)
 src/components/    editor/ (port de su editor), ui/ (su pila shadcn),
                    home/ (su page + repo-select/latest/templates)
-src/lib/           templates.ts (su lista), tracker.ts (sus visitas), utils (cn)
+src/lib/           templates.ts (su lista), tracker.ts (sus visitas + modo),
+                   media-src.ts (src de previews local/remoto), utils (cn)
 fixtures/blog/     repo mínimo para los tests del crate
 ```
 
@@ -84,9 +90,10 @@ El playground de pruebas manuales y los docs de producto (PRD, TRD, UX, UI, FLOW
 
 ## Alcance y siguientes pasos **[Folio]**
 
-Hecho: paridad con la plataforma (editor portado, home con sesión GitHub, media, canvas, operaciones de entrada, campos completos).
+Hecho: paridad con la plataforma (editor portado, home con sesión GitHub, media, canvas, operaciones de entrada, campos completos) y **proyectos remotos** (abrir sin clonar como la web, edición contra la API de GitHub, Save publica directo en la rama por defecto; commit-messages portados con override del `.pages.yml`; 409/422 con auto-rename; rename por Git Data; historial con link a GitHub; previews privadas por proxy del core).
 
 Pendiente acordado con el dueño:
 
-1. **Proyectos remotos**: al abrir un proyecto, la app pregunta local (clona, offline, commit local) o remoto (sin clonar, edición contra la API de GitHub como la web; en remoto, Save publica directo a la rama — decisión del dueño).
-2. **Agente de contenido (v2)**: chat sobre la entrada abierta, transporte `opencode serve` (HTTP+SSE), scope file|collection, aceptar pasa por `write_entry`, rechazar no toca disco. Sin shell, sin push, no edita Astro ni `src-tauri`.
+1. **Agente de contenido (v2)**: chat sobre la entrada abierta, transporte `opencode serve` (HTTP+SSE), scope file|collection, aceptar pasa por `write_entry`, rechazar no toca disco. Sin shell, sin push, no edita Astro ni `src-tauri`.
+
+Fuera de alcance explícito (decisión del dueño, 2026-10-02): RepoBranches (cambio/creación de rama en remoto — se abre con la rama por defecto), editor `/configuration` para repos sin `.pages.yml`, PRs para repos con rules (solo el error que los sugiere, como la web).

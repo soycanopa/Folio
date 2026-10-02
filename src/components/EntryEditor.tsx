@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   ChevronRight,
@@ -11,6 +11,7 @@ import {
 import type { CommitInfo, ContentItem, MediaRef } from "../types";
 import { api } from "../api";
 import { relTime } from "../lib/time";
+import { resolveMediaSrc } from "../lib/media-src";
 import { FieldInput } from "./FieldInput";
 import { MediaPickerDialog } from "./Media";
 
@@ -33,6 +34,8 @@ interface EntryEditorProps {
   dirty: boolean;
   /** false para `type: file`: misma barra, sin breadcrumb de lista (UI.md). */
   showBack: boolean;
+  /** Modo remoto: los textos reflejan que todo se publica al guardar. */
+  remote?: boolean;
   root: string;
   mediaInput?: string | null;
   mediaItems: MediaRef[];
@@ -40,8 +43,9 @@ interface EntryEditorProps {
   onFmChange: (name: string, value: unknown) => void;
   onBodyChange: (body: string) => void;
   onSave: () => void;
-  onCommit: () => void;
-  onPush: () => void;
+  /** Solo local: en remoto cada save publica su commit en la rama. */
+  onCommit?: () => void;
+  onPush?: () => void;
   onBack: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
@@ -52,6 +56,7 @@ export function EntryEditor({
   draft,
   dirty,
   showBack,
+  remote,
   root,
   mediaInput,
   mediaItems,
@@ -91,11 +96,41 @@ export function EntryEditor({
   const bodyField = collection.fields.find((f) => f.name === "body");
   const title = String(draft.fm.title ?? "");
 
+  // Remoto: las previews de campos image se resuelven contra la API
+  // (raw URL o caché del core) y van llegando al mapa.
+  const imageNames = fmFields
+    .filter((f) => f.type === "image")
+    .map((f) => String(draft.fm[f.name] ?? "").split("/").pop())
+    .filter(Boolean)
+    .join(",");
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!remote || !mediaInput || !imageNames) return;
+    let alive = true;
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const n of imageNames.split(",")) {
+        try {
+          next[n] = await resolveMediaSrc(true, root, `${mediaInput}/${n}`);
+        } catch {
+          // sin preview para ese nombre
+        }
+      }
+      if (alive && Object.keys(next).length > 0) {
+        setThumbs((t) => ({ ...t, ...next }));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [remote, root, mediaInput, imageNames]);
+
   // La ruta pública del front matter apunta al basename en media.input.
   const previewSrcFor = (v: unknown): string | undefined => {
     if (typeof v !== "string" || !v || !mediaInput) return undefined;
     const name = v.split("/").pop();
     if (!name) return undefined;
+    if (remote) return thumbs[name];
     return convertFileSrc(`${root}/${mediaInput}/${name}`);
   };
 
@@ -142,9 +177,21 @@ export function EntryEditor({
                         {c.author.charAt(0).toUpperCase()}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm">
-                          {c.message || c.oid.slice(0, 7)}
-                        </span>
+                        {/* Remoto: cada commit enlaza a GitHub (su entry-history). */}
+                        {c.html_url ? (
+                          <a
+                            href={c.html_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block truncate text-sm hover:underline"
+                          >
+                            {c.message || c.oid.slice(0, 7)}
+                          </a>
+                        ) : (
+                          <span className="block truncate text-sm">
+                            {c.message || c.oid.slice(0, 7)}
+                          </span>
+                        )}
                         <span className="block text-xs text-ink-dim">
                           {c.author} · {relTime(c.time)}
                         </span>
@@ -164,17 +211,19 @@ export function EntryEditor({
                   {history == null && (
                     <p className="px-3 py-3 text-sm text-ink-dim">Loading…</p>
                   )}
-                  <div className="mt-1 border-t border-line pt-1">
-                    <button
-                      onClick={() => {
-                        setHistoryOpen(false);
-                        onPush();
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-raised"
-                    >
-                      <Upload size={14} /> Push…
-                    </button>
-                  </div>
+                  {onPush && (
+                    <div className="mt-1 border-t border-line pt-1">
+                      <button
+                        onClick={() => {
+                          setHistoryOpen(false);
+                          onPush();
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-raised"
+                      >
+                        <Upload size={14} /> Push…
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -231,24 +280,28 @@ export function EntryEditor({
                     collection.operations.delete) && (
                     <div className="my-1 border-t border-line" />
                   )}
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onCommit();
-                    }}
-                    className="block w-full px-3 py-1.5 text-left hover:bg-raised"
-                  >
-                    Commit…
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onPush();
-                    }}
-                    className="block w-full px-3 py-1.5 text-left hover:bg-raised"
-                  >
-                    Push
-                  </button>
+                  {onCommit && (
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onCommit();
+                      }}
+                      className="block w-full px-3 py-1.5 text-left hover:bg-raised"
+                    >
+                      Commit…
+                    </button>
+                  )}
+                  {onPush && (
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        onPush();
+                      }}
+                      className="block w-full px-3 py-1.5 text-left hover:bg-raised"
+                    >
+                      Push
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -324,6 +377,7 @@ export function EntryEditor({
                           mediaInput,
                           items: mediaItems,
                           onUpload: onUploadMedia,
+                          remote,
                         }
                       : undefined
                   }
@@ -341,6 +395,7 @@ export function EntryEditor({
         <MediaPickerDialog
           root={root}
           items={mediaItems}
+          remote={remote}
           onUpload={() => void onUploadMedia()}
           onPick={(m) => {
             onFmChange(picking, m.public_path);
@@ -405,7 +460,9 @@ export function EntryEditor({
             <h2 className="mb-2 text-base font-semibold">Delete entry</h2>
             <p className="mb-4 text-sm text-ink-dim">
               Delete <span className="text-ink">{basename(draft.path)}</span>?
-              It will be removed on the next commit.
+              {remote
+                ? " This publishes a deletion commit to the branch."
+                : " It will be removed on the next commit."}
             </p>
             <div className="flex justify-end gap-2">
               <button

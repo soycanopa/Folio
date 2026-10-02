@@ -314,7 +314,7 @@ pub fn list_repos(token: &str, login: &str, keyword: &str) -> Result<Vec<GhRepo>
         .collect())
 }
 
-fn urlencode(s: &str) -> String {
+pub(crate) fn urlencode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
@@ -329,18 +329,24 @@ fn urlencode(s: &str) -> String {
 
 /// Su "Copy template": crea una copia del repo template en la cuenta
 /// del usuario (GitHub API generate, token personal; su server hacía
-/// lo mismo con la GitHub App).
+/// lo mismo con la GitHub App). El endpoint exige Authorization.
 pub fn create_from_template(token: &str, template_full: &str, name: &str) -> Result<String, String> {
     #[derive(Deserialize)]
     struct RawCreated {
         full_name: String,
     }
-    let created: RawCreated = post_json(
-        &format!(
-            "https://api.github.com/repos/{template_full}/generate"
-        ),
-        serde_json::json!({ "name": name }),
-    )?;
+    let mut resp = ureq::post(&format!(
+        "https://api.github.com/repos/{template_full}/generate"
+    ))
+    .header("Accept", "application/vnd.github+json")
+    .header("Authorization", format!("Bearer {token}"))
+    .header("User-Agent", "folio")
+    .send_json(serde_json::json!({ "name": name }))
+    .map_err(|e| format!("github: {e}"))?;
+    let created = resp
+        .body_mut()
+        .read_json::<RawCreated>()
+        .map_err(|e| format!("github: respuesta inválida: {e}"))?;
     Ok(created.full_name)
 }
 

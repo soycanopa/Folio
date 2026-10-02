@@ -13,6 +13,7 @@ interface RichTextProps {
     mediaInput: string;
     items: MediaRef[];
     onUpload: () => Promise<MediaRef | null>;
+    remote?: boolean;
   };
 }
 
@@ -66,6 +67,7 @@ export function RichText({ value, onChange, sourceMode, media }: RichTextProps) 
         <MediaPickerDialog
           root={media.root}
           items={media.items}
+          remote={media.remote}
           onUpload={() => media.onUpload()}
           onPick={(m: MediaRef) =>
             settlePicker({ kind: "url", src: m.public_path, alt: m.name })
