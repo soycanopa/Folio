@@ -196,10 +196,12 @@ pub fn resolve_new_entry(
         return Err(format!("slug inválido: {slug:?} (solo a-z, 0-9 y -)"));
     }
     let tpl = item.filename.as_deref().unwrap_or("{slug}.md");
-    let filename = tpl.replace("{slug}", slug);
+    // {primary} es el campo primario en la web; al crear, Folio lo pide
+    // como slug, así que resuelve igual.
+    let filename = tpl.replace("{slug}", slug).replace("{primary}", slug);
     if filename.contains('{') {
         return Err(format!(
-            "filename con placeholders que v0 no resuelve: {tpl} (solo {{slug}})"
+            "filename con placeholders que v0 no resuelve: {tpl} (solo {{{{slug}}}}/{{{{primary}}}})"
         ));
     }
     Ok(format!("{}/{}", item.path.trim_end_matches('/'), filename))
