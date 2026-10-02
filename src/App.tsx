@@ -110,6 +110,17 @@ export default function App() {
     api.repoStatus().then(setStatus).catch((e) => setMessage(String(e)));
   }, []);
 
+  // El core invalida la sesión en un 401 (remote::gh_error_ui, como su
+  // GithubAuthExpired) y sus errores de sesión llevan el texto
+  // "sesión de GitHub": al verlo, el home deja de creer que hay sesión.
+  const report = useCallback((e: unknown) => {
+    const msg = String(e);
+    setMessage(msg);
+    if (msg.includes("sesión de GitHub")) {
+      api.githubSession().then(setGhSession).catch(() => undefined);
+    }
+  }, []);
+
   const loadRows = useCallback(async (c: ContentItem) => {
     try {
       const list = await api.listEntries(c.path);
@@ -121,7 +132,7 @@ export default function App() {
       );
       setRows(contents);
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -159,7 +170,7 @@ export default function App() {
       if (!remote) setMessage(`Imported ${files.length} file(s)`);
       return last;
     } catch (e) {
-      setMessage(String(e));
+      report(e);
       return null;
     }
   }, [loadMedia]);
@@ -175,7 +186,7 @@ export default function App() {
           remote ? `Deleted ${m.path}` : `Deleted ${m.path} — commit to apply`,
         );
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [loadMedia, refreshStatus],
@@ -209,7 +220,7 @@ export default function App() {
         },
       });
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -264,7 +275,7 @@ export default function App() {
       setCanvasSnapshot(JSON.stringify(full));
       setView({ kind: "canvas", collection: c });
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -287,7 +298,7 @@ export default function App() {
         void loadMedia();
         if (cfg.content.length > 0) selectCollection(cfg.content[0]);
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [refreshStatus, selectCollection],
@@ -333,7 +344,7 @@ export default function App() {
           },
         });
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [],
@@ -363,7 +374,7 @@ export default function App() {
           draft: { path: res.path, isNew: true, fm, body: "", snapshot: "" },
         });
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [openEntry],
@@ -438,7 +449,7 @@ export default function App() {
         setMessage(`Saved ${path}`);
       }
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -468,7 +479,7 @@ export default function App() {
       await api.githubLogout();
       setGhSession(null);
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, []);
 
@@ -492,7 +503,7 @@ export default function App() {
         void loadMedia();
         if (cfg.content.length > 0) selectCollection(cfg.content[0]);
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [loadMedia, selectCollection],
@@ -533,7 +544,7 @@ export default function App() {
         trackVisit(visit.owner, visit.repo, visit.branch, "local");
         await openRepoFlow(target);
       } catch (e) {
-        setMessage(String(e));
+        report(e);
       }
     },
     [openRepoFlow],
@@ -588,7 +599,7 @@ export default function App() {
       refreshStatus();
       setMessage("Pushed");
     } catch (e) {
-      setMessage(String(e));
+      report(e);
     }
   }, [refreshStatus]);
 
@@ -769,7 +780,7 @@ export default function App() {
                 );
                 await openEntry(v.collection, newPath);
               } catch (e) {
-                setMessage(String(e));
+                report(e);
               }
             }}
             onDelete={async () => {
@@ -785,7 +796,7 @@ export default function App() {
                 );
                 selectCollection(v.collection);
               } catch (e) {
-                setMessage(String(e));
+                report(e);
               }
             }}
             showBack={view.collection.kind === "collection"}
@@ -857,7 +868,7 @@ export default function App() {
               refreshStatus();
               setMessage(`Commit ${oid.slice(0, 8)}`);
             } catch (e) {
-              setMessage(String(e));
+              report(e);
             }
           }}
         />
@@ -890,7 +901,7 @@ export default function App() {
               await api.cloneRepo(url, dest);
               await openRepoFlow(dest);
             } catch (e) {
-              setMessage(String(e));
+              report(e);
             }
           }}
         />
