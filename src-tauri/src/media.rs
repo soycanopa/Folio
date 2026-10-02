@@ -31,19 +31,22 @@ fn is_image_ext(name: &str) -> bool {
 }
 
 fn media_input(st: &RepoState) -> Result<String, String> {
-    st.config
-        .as_ref()
-        .ok_or("sin .pages.yml")?
-        .media
+    media_input_cfg(st.config.as_ref().ok_or("sin .pages.yml")?)
+}
+
+pub(crate) fn media_input_cfg(cfg: &crate::config::PagesConfig) -> Result<String, String> {
+    cfg.media
         .input
         .clone()
         .ok_or_else(|| "el config no declara media.input".to_string())
 }
 
 fn public_path(st: &RepoState, name: &str) -> String {
-    let output = st
-        .config
-        .as_ref()
+    public_path_cfg(st.config.as_ref(), name)
+}
+
+pub(crate) fn public_path_cfg(cfg: Option<&crate::config::PagesConfig>, name: &str) -> String {
+    let output = cfg
         .and_then(|c| c.media.output.as_deref())
         .unwrap_or("");
     if output.is_empty() {
@@ -129,6 +132,27 @@ fn upload_name(original: &str, rename: Option<&str>) -> String {
     }
 }
 
+/// Resuelve el destino de una subida a partir del config (valida el
+/// nombre y el invariante de media.input): lo comparten el copiado
+/// local y el PUT remoto.
+pub(crate) fn upload_target(
+    cfg: &crate::config::PagesConfig,
+    original: &str,
+) -> Result<(String, String), String> {
+    let input = media_input_cfg(cfg)?;
+    if original.starts_with('.') {
+        return Err(format!("nombre de archivo inválido: {original:?}"));
+    }
+    let name = upload_name(original, cfg.media.rename.as_deref());
+    if name.trim().is_empty() || name.contains('/') {
+        return Err(format!("nombre de archivo inválido: {name:?}"));
+    }
+    let rel = format!("{}/{}", input.trim_end_matches('/'), name);
+    // Invariante: el write queda bajo media.input del config.
+    crate::entry::ensure_writable_config(cfg, &rel)?;
+    Ok((rel, name))
+}
+
 fn collect_files(dir: &Path, root: &Path, out: &mut Vec<MediaRef>, st: &RepoState) -> Result<(), String> {
     for entry in fs::read_dir(dir).map_err(|e| format!("leer {dir:?}: {e}"))? {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -166,24 +190,17 @@ pub fn list_media_impl(st: &RepoState) -> Result<Vec<MediaRef>, String> {
 /// en `touched`: entra en el mismo commit que el `.md` (FLOW.md, v1).
 /// Acepta cualquier tipo (image y file fields); si ya existe, no se pisa.
 pub fn import_media_impl(st: &mut RepoState, src: &str) -> Result<MediaRef, String> {
-    let input = media_input(st)?;
-    let rename = st.config.as_ref().and_then(|c| c.media.rename.as_deref());
-
+    let cfg = st
+        .config
+        .as_ref()
+        .ok_or("sin .pages.yml")?
+        .clone();
     let original = Path::new(src)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .ok_or("no se puede leer el nombre del archivo")?;
-    if original.starts_with('.') {
-        return Err(format!("nombre de archivo inválido: {original:?}"));
-    }
-    let name = upload_name(&original, rename);
-    if name.trim().is_empty() || name.contains('/') {
-        return Err(format!("nombre de archivo inválido: {name:?}"));
-    }
+    let (rel, name) = upload_target(&cfg, &original)?;
 
-    let rel = format!("{}/{}", input.trim_end_matches('/'), name);
-    // Invariante: el write queda bajo media.input del config.
-    ensure_writable(st, &rel)?;
     let dest = safe_join(&st.root, &rel)?;
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("crear {rel}: {e}"))?;
@@ -194,7 +211,7 @@ pub fn import_media_impl(st: &mut RepoState, src: &str) -> Result<MediaRef, Stri
     fs::copy(src, &dest).map_err(|e| format!("copiar {src}: {e}"))?;
     track(st, &rel);
     Ok(MediaRef {
-        public_path: public_path(st, &name),
+        public_path: public_path_cfg(Some(&cfg), &name),
         is_image: is_image_ext(&name),
         path: rel,
         name,
@@ -221,33 +238,157 @@ fn track(st: &mut RepoState, rel: &str) {
 }
 
 #[tauri::command]
-pub fn list_media(state: tauri::State<'_, AppState>) -> Result<Vec<MediaRef>, String> {
-    let guard = state.lock().unwrap();
-    match guard.as_ref().ok_or("no hay proyecto abierto")? {
-        Project::Local(st) => list_media_impl(st),
-        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+pub async fn list_media(state: tauri::State<'_, AppState>) -> Result<Vec<MediaRef>, String> {
+    let (ctx, cfg) = {
+        let guard = state.lock().unwrap();
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return list_media_impl(st),
+            Project::Remote(rs) => {
+                let cfg = rs.config.clone().ok_or("sin .pages.yml")?;
+                (crate::remote::remote_ctx(rs), cfg)
+            }
+        }
+    };
+    let input = media_input_cfg(&cfg)?;
+    let token = crate::remote::current_token()?;
+    let (t, c, dir) = (token.clone(), ctx.clone(), input.clone());
+    let files = tauri::async_runtime::spawn_blocking(move || {
+        // Su fetchMediaDirectoryEntries: REST contents por carpeta;
+        // Folio aplana subcarpetas como su grid local.
+        let mut out = Vec::new();
+        crate::remote::fetch_media_dir(&t, &c, &dir, &mut out)?;
+        Ok::<_, String>(out)
+    })
+    .await
+    .map_err(|e| format!("listar media: {e}"))??;
+    let mut refs: Vec<MediaRef> = files
+        .iter()
+        .map(|f| MediaRef {
+            public_path: public_path_cfg(Some(&cfg), &f.name),
+            is_image: is_image_ext(&f.name),
+            path: f.path.clone(),
+            name: f.name.clone(),
+        })
+        .collect();
+    refs.sort_by(|a, b| a.path.cmp(&b.path));
+    {
+        let mut guard = state.lock().unwrap();
+        if let Some(Project::Remote(rs)) = guard.as_mut() {
+            if crate::remote::is_same_remote(rs, &ctx) {
+                rs.media = files.into_iter().map(|f| (f.path.clone(), f)).collect();
+            }
+        }
     }
+    Ok(refs)
 }
 
 #[tauri::command]
-pub fn import_media(
+pub async fn import_media(
     state: tauri::State<'_, AppState>,
-    src: &str,
+    src: String,
 ) -> Result<MediaRef, String> {
-    let mut guard = state.lock().unwrap();
-    match guard.as_mut().ok_or("no hay proyecto abierto")? {
-        Project::Local(st) => import_media_impl(st, src),
-        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    let (ctx, cfg) = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return import_media_impl(st, &src),
+            Project::Remote(rs) => {
+                let cfg = rs.config.clone().ok_or("sin .pages.yml")?;
+                (crate::remote::remote_ctx(rs), cfg)
+            }
+        }
+    };
+    // El core lee los bytes del archivo local elegido (el webview no
+    // toca el disco) y publica un PUT por archivo, como su MediaUpload.
+    let original = Path::new(&src)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .ok_or("no se puede leer el nombre del archivo")?;
+    let (rel, _name) = upload_target(&cfg, &original)?;
+    let bytes = fs::read(&src).map_err(|e| format!("leer {src}: {e}"))?;
+    let token = crate::remote::current_token()?;
+    let login = crate::remote::current_session()?.login;
+    let (t, c, cfg2, p, b) = (
+        token.clone(),
+        ctx.clone(),
+        Some(cfg.clone()),
+        rel.clone(),
+        bytes,
+    );
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        crate::remote::put_bytes_file(&t, &c, cfg2.as_ref(), None, &login, &p, &b, None)
+    })
+    .await
+    .map_err(|e| format!("subir media: {e}"))??;
+    let name = outcome
+        .path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&outcome.path)
+        .to_string();
+    {
+        let mut guard = state.lock().unwrap();
+        if let Some(Project::Remote(rs)) = guard.as_mut() {
+            if crate::remote::is_same_remote(rs, &ctx) {
+                // Refresca el listado cacheado con el archivo nuevo.
+                if let Ok(f) =
+                    crate::gh_api::get_content(&token, &ctx.owner, &ctx.repo, &outcome.path, &ctx.branch)
+                {
+                    rs.media.insert(outcome.path.clone(), f);
+                }
+            }
+        }
     }
+    Ok(MediaRef {
+        public_path: public_path_cfg(Some(&cfg), &name),
+        is_image: is_image_ext(&name),
+        path: outcome.path,
+        name,
+    })
 }
 
 #[tauri::command]
-pub fn delete_media(state: tauri::State<'_, AppState>, path: &str) -> Result<(), String> {
+pub async fn delete_media(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    let (ctx, cfg, sha) = {
+        let mut guard = state.lock().unwrap();
+        match guard.as_mut().ok_or("no hay proyecto abierto")? {
+            Project::Local(st) => return delete_media_impl(st, &path),
+            Project::Remote(rs) => {
+                let cfg = rs.config.clone().ok_or("sin .pages.yml")?;
+                crate::entry::ensure_writable_config(&cfg, &path)?;
+                let sha = rs.media.get(&path).map(|f| f.sha.clone());
+                (crate::remote::remote_ctx(rs), cfg, sha)
+            }
+        }
+    };
+    let token = crate::remote::current_token()?;
+    let login = crate::remote::current_session()?.login;
+    let (t, c, cfg2, p, sha) = (
+        token.clone(),
+        ctx.clone(),
+        Some(cfg),
+        path.clone(),
+        sha,
+    );
+    tauri::async_runtime::spawn_blocking(move || {
+        let sha = match sha {
+            Some(s) => s,
+            None => match crate::gh_api::get_content(&t, &c.owner, &c.repo, &p, &c.branch) {
+                Ok(f) => f.sha,
+                Err(e) if e.status == 404 => return Err(format!("no existe {p}")),
+                Err(e) => return Err(crate::remote::gh_error_ui(e)),
+            },
+        };
+        crate::remote::delete_file_remote(&t, &c, cfg2.as_ref(), None, &login, &p, &sha)
+    })
+    .await
+    .map_err(|e| format!("borrar media: {e}"))??;
     let mut guard = state.lock().unwrap();
-    match guard.as_mut().ok_or("no hay proyecto abierto")? {
-        Project::Local(st) => delete_media_impl(st, path),
-        Project::Remote(_) => Err(crate::repo::WIP_REMOTE.to_string()),
+    if let Some(Project::Remote(rs)) = guard.as_mut() {
+        if crate::remote::is_same_remote(rs, &ctx) {
+            rs.media.remove(&path);
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -345,6 +486,16 @@ mod tests {
         assert!(st.touched.contains(&std::path::PathBuf::from(&m.path)));
         // Fuera de media.input: rechazado por ensure_writable.
         assert!(delete_media_impl(&mut st, "README.md").is_err());
+    }
+
+    #[test]
+    fn upload_target_valida_y_resuelve() {
+        let cfg = crate::config::parse_config(CONFIG_YAML).unwrap();
+        let (rel, name) = upload_target(&cfg, "foto.png").unwrap();
+        assert_eq!(rel, "src/content/media/foto.png");
+        assert_eq!(name, "foto.png");
+        // Dot-file: rechazado, igual que el copiado local.
+        assert!(upload_target(&cfg, ".hidden").is_err());
     }
 
     #[test]

@@ -14,7 +14,9 @@ pub struct RepoState {
 
 /// Proyecto remoto: se edita contra la API de GitHub sin clonar. La
 /// caché `files` guarda el contenido y el `sha` con el que se cargó
-/// cada path — el PUT lo exige y su 409 detecta cambios ajenos.
+/// cada path — el PUT lo exige y su 409 detecta cambios ajenos. La
+/// caché `media` guarda el listado (sha + download_url) para las
+/// previews privadas.
 pub struct RemoteState {
     pub owner: String,
     pub repo: String,
@@ -22,6 +24,7 @@ pub struct RemoteState {
     pub is_public: bool,
     pub config: Option<PagesConfig>,
     pub files: HashMap<String, RemoteFile>,
+    pub media: HashMap<String, crate::gh_api::GhFile>,
 }
 
 #[derive(Clone)]

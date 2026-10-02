@@ -25,6 +25,7 @@ pub fn run() {
             repo::open_repo,
             repo::clone_repo,
             remote::open_remote_repo,
+            remote::remote_media_url,
             repo::repo_status,
             repo::list_entries,
             config::read_config,

@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use crate::commit_message::{self, CommitContext};
 use crate::config::{self, ContentItem, PagesConfig};
 use crate::gh_api::{self, GhError};
@@ -95,6 +97,7 @@ pub fn open_remote(token: &str, owner: &str, repo: &str) -> Result<OpenRemote, S
             is_public: !meta.private,
             config: cfg,
             files: Default::default(),
+            media: Default::default(),
         },
         config_error,
     })
@@ -105,6 +108,7 @@ pub fn open_remote(token: &str, owner: &str, repo: &str) -> Result<OpenRemote, S
 /// 2, "Calling Rust"). El lock del estado nunca cruza un await.
 #[tauri::command]
 pub async fn open_remote_repo(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     owner: String,
     repo: String,
@@ -114,6 +118,10 @@ pub async fn open_remote_repo(
         .await
         .map_err(|e| format!("abrir repo remoto: {e}"))??;
     let OpenRemote { state: rs, config_error } = opened;
+    // Miniaturas de repos privados: el webview no puede llevar el
+    // token, así que el core descarga a esta caché (clave sha) y el
+    // asset protocol la sirve vía convertFileSrc.
+    allow_media_cache_scope(&app)?;
     let summary = RepoSummary {
         root: String::new(),
         branch: rs.branch.clone(),
@@ -125,6 +133,101 @@ pub async fn open_remote_repo(
     let mut guard = state.lock().unwrap();
     *guard = Some(Project::Remote(rs));
     Ok(summary)
+}
+
+fn allow_media_cache_scope(app: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = media_cache_dir(app)?;
+    app.asset_protocol_scope()
+        .allow_directory(dir, true)
+        .map_err(|e| format!("asset scope: {e}"))
+}
+
+fn media_cache_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let base = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("cache dir: {e}"))?;
+    Ok(base.join("remote-media"))
+}
+
+/// Preview de un archivo de media remoto. Público → raw URL directa
+/// (como su thumbnail); privado → descarga autenticada del core a la
+/// caché por sha y path local para `convertFileSrc`. Divergencia
+/// documentada: la web usa una URL autenticada en el navegador, Folio
+/// no puede exponer el token al webview.
+#[derive(Serialize)]
+pub struct MediaSrc {
+    pub is_asset: bool,
+    pub url: String,
+}
+
+#[tauri::command]
+pub async fn remote_media_url(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<MediaSrc, String> {
+    let (ctx, cached) = {
+        let guard = state.lock().unwrap();
+        match guard.as_ref().ok_or("no hay proyecto abierto")? {
+            Project::Local(_) => {
+                return Err("remote_media_url es de proyectos remotos".to_string())
+            }
+            Project::Remote(rs) => {
+                if rs.is_public {
+                    return Ok(MediaSrc {
+                        is_asset: false,
+                        url: format!(
+                            "https://raw.githubusercontent.com/{}/{}/{}/{}",
+                            rs.owner,
+                            rs.repo,
+                            rs.branch,
+                            gh_api::encode_path(&path)
+                        ),
+                    });
+                }
+                (remote_ctx(rs), rs.media.get(&path).cloned())
+            }
+        }
+    };
+    let token = current_token()?;
+    let (t, c, p) = (token.clone(), ctx.clone(), path.clone());
+    let (bytes, sha) = tauri::async_runtime::spawn_blocking(move || {
+        let file = match cached {
+            Some(f) => f,
+            None => gh_api::get_content(&t, &c.owner, &c.repo, &p, &c.branch).map_err(gh_error_ui)?,
+        };
+        let sha = file.sha.clone();
+        let bytes =
+            gh_api::download_file(&t, &c.owner, &c.repo, &p, &c.branch, file.download_url.as_deref())
+                .map_err(gh_error_ui)?;
+        Ok::<_, String>((bytes, sha))
+    })
+    .await
+    .map_err(|e| format!("descargar media: {e}"))??;
+    let ext = path
+        .rsplit('.')
+        .next()
+        .filter(|e| !e.contains('/'))
+        .unwrap_or("");
+    let file_name = if ext.is_empty() {
+        sha
+    } else {
+        format!("{sha}.{ext}")
+    };
+    let dest = media_cache_dir(&app)?
+        .join(format!("{}~{}", ctx.owner, ctx.repo))
+        .join(file_name);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("crear caché: {e}"))?;
+    }
+    std::fs::write(&dest, bytes).map_err(|e| format!("caché de media: {e}"))?;
+    Ok(MediaSrc {
+        is_asset: true,
+        url: dest.display().to_string(),
+    })
 }
 
 // ---- lecturas ----
@@ -233,10 +336,39 @@ pub fn put_text_file(
     text: &str,
     sha: Option<&str>,
 ) -> Result<PutOutcome, String> {
+    let b64 = gh_api::encode_content(text.as_bytes());
+    put_b64_file(token, ctx, cfg, item, login, path, &b64, sha)
+}
+
+/// PUT de bytes (media): mismo camino de save/conflictos que la web
+/// aplica a su MediaUpload.
+pub fn put_bytes_file(
+    token: &str,
+    ctx: &RemoteCtx,
+    cfg: Option<&PagesConfig>,
+    item: Option<&ContentItem>,
+    login: &str,
+    path: &str,
+    bytes: &[u8],
+    sha: Option<&str>,
+) -> Result<PutOutcome, String> {
+    let b64 = gh_api::encode_content(bytes);
+    put_b64_file(token, ctx, cfg, item, login, path, &b64, sha)
+}
+
+fn put_b64_file(
+    token: &str,
+    ctx: &RemoteCtx,
+    cfg: Option<&PagesConfig>,
+    item: Option<&ContentItem>,
+    login: &str,
+    path: &str,
+    b64: &str,
+    sha: Option<&str>,
+) -> Result<PutOutcome, String> {
     let action = if sha.is_some() { "update" } else { "create" };
     let message = commit_msg(cfg, item, action, ctx, login, path, None, None);
-    let b64 = gh_api::encode_content(text.as_bytes());
-    match gh_api::put_content(token, &ctx.owner, &ctx.repo, path, &ctx.branch, &message, &b64, sha)
+    match gh_api::put_content(token, &ctx.owner, &ctx.repo, path, &ctx.branch, &message, b64, sha)
     {
         Ok(put) => Ok(PutOutcome {
             path: path.to_string(),
@@ -245,10 +377,34 @@ pub fn put_text_file(
         }),
         Err(e) if e.status == 409 => Err(conflict_message(&e, sha.is_some())),
         Err(e) if e.status == 422 && sha.is_none() => {
-            auto_rename_put(token, ctx, cfg, item, login, path, &b64, &e)
+            auto_rename_put(token, ctx, cfg, item, login, path, b64, &e)
         }
         Err(e) => Err(gh_error_ui(e)),
     }
+}
+
+/// Listado de media por REST contents (su fetchMediaDirectoryEntries),
+/// recursando en subcarpetas para el grid plano de Folio.
+pub fn fetch_media_dir(
+    token: &str,
+    ctx: &RemoteCtx,
+    dir: &str,
+    out: &mut Vec<gh_api::GhFile>,
+) -> Result<(), String> {
+    let files =
+        gh_api::get_content_dir(token, &ctx.owner, &ctx.repo, dir, &ctx.branch).map_err(gh_error_ui)?;
+    let mut subdirs = Vec::new();
+    for f in files {
+        match f.kind.as_str() {
+            "file" => out.push(f),
+            "dir" => subdirs.push(f.path),
+            _ => {}
+        }
+    }
+    for sub in subdirs {
+        fetch_media_dir(token, ctx, &sub, out)?;
+    }
+    Ok(())
 }
 
 /// El copy de sus 409: reglas de repo piden PR; sha → el archivo cambió
