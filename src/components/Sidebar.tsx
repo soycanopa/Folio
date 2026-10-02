@@ -48,7 +48,7 @@ export function Sidebar({
           title="All projects"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
         >
-          <PagesMark size={18} />
+          <PagesMark size={24} />
         </button>
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{repoName}</span>
