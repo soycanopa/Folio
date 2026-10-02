@@ -39,6 +39,32 @@
   --ring: oklch(0.553 0.013 58.071);
 }
 
+/* Su @layer base (app/globals.css): sin esto, los `border` de su pila
+   quedan con currentColor (blanco) en vez del gris del tema. */
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline-color: color-mix(in oklab, var(--color-ring) 50%, transparent);
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+/* Su @layer base (app/globals.css): sin esto, los `border` de su pila
+   quedan con currentColor (blanco) en vez del gris del tema. */
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline-color: color-mix(in oklab, var(--color-ring) 50%, transparent);
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
 html,
 body,
 #root {

@@ -156,34 +156,92 @@ pub fn poll_device_code(device_code: &str) -> Result<DevicePoll, String> {
 }
 
 // ---- Keychain ----
+//
+// El item se crea con `security add-generic-password -T <binario>`,
+// que deja el binario actual en la ACL: puede leerlo sin prompt. Sin
+// esto, cada recompilación en dev cambia la identidad del binario y
+// macOS vuelve a pedir permiso. El token via argv solo al crear; la
+// lectura posterior usa la ACL y queda cacheada en memoria.
 
-fn keychain_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .map_err(|e| format!("keychain: {e}"))
+use std::sync::Mutex;
+
+static SESSION_CACHE: Mutex<Option<Option<GithubSession>>> = Mutex::new(None);
+
+fn exe_path() -> Result<String, String> {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("current_exe: {e}"))
+}
+
+fn security(args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("security")
+        .args(args)
+        .output()
+        .map_err(|e| format!("security: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "security: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 pub fn save_session(session: &GithubSession) -> Result<(), String> {
     let json = serde_json::to_string(session).map_err(|e| e.to_string())?;
-    keychain_entry()?
-        .set_password(&json)
-        .map_err(|e| format!("keychain: {e}"))
+    let exe = exe_path()?;
+    security(&[
+        "add-generic-password",
+        "-U",
+        "-s",
+        KEYCHAIN_SERVICE,
+        "-a",
+        KEYCHAIN_ACCOUNT,
+        "-w",
+        &json,
+        "-T",
+        &exe,
+    ])?;
+    *SESSION_CACHE.lock().unwrap() = Some(Some(session.clone()));
+    Ok(())
 }
 
 pub fn load_session() -> Result<Option<GithubSession>, String> {
-    match keychain_entry()?.get_password() {
-        Ok(json) => serde_json::from_str(&json)
-            .map(Some)
-            .map_err(|e| format!("keychain: sesión inválida: {e}")),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("keychain: {e}")),
+    if let Some(cached) = SESSION_CACHE.lock().unwrap().clone() {
+        return Ok(cached);
     }
+    let loaded = match security(&[
+        "find-generic-password",
+        "-s",
+        KEYCHAIN_SERVICE,
+        "-a",
+        KEYCHAIN_ACCOUNT,
+        "-w",
+    ]) {
+        Ok(json) => serde_json::from_str::<GithubSession>(&json)
+            .map(Some)
+            .map_err(|e| format!("keychain: sesión inválida: {e}"))?,
+        Err(e) if e.contains("could not be found") => None,
+        Err(e) => return Err(format!("keychain: {e}")),
+    };
+    *SESSION_CACHE.lock().unwrap() = Some(loaded.clone());
+    Ok(loaded)
 }
 
 pub fn clear_session() -> Result<(), String> {
-    match keychain_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("keychain: {e}")),
-    }
+    let res = match security(&[
+        "delete-generic-password",
+        "-s",
+        KEYCHAIN_SERVICE,
+        "-a",
+        KEYCHAIN_ACCOUNT,
+    ]) {
+        Ok(_) => Ok(()),
+        Err(e) if e.contains("could not be found") => Ok(()),
+        Err(e) => Err(e),
+    };
+    *SESSION_CACHE.lock().unwrap() = Some(None);
+    res
 }
 
 // ---- API de repos ----
@@ -399,6 +457,22 @@ mod tests {
         match load_session() {
             Ok(None) | Ok(Some(_)) => {}
             Err(e) => panic!("keychain: {e}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod real_tests {
+    use super::*;
+
+    // Manual: cargo test github_real -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn list_repos_real() {
+        let session = load_session().unwrap().expect("sin sesión");
+        match list_repos(&session.token, &session.login, "") {
+            Ok(repos) => println!("OK {} repos: {:?}", repos.len(), repos.iter().map(|r| r.repo.clone()).collect::<Vec<_>>()),
+            Err(e) => println!("ERROR: {e}"),
         }
     }
 }
