@@ -208,12 +208,21 @@ pub struct GhActionRun {
     pub head_branch: Option<String>,
     #[serde(default)]
     pub event: Option<String>,
+    /// Quien disparó la corrida (columna "Triggered by" de su tabla).
+    #[serde(default)]
+    pub actor: Option<GhActor>,
     #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
     #[serde(default)]
     pub run_started_at: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct GhActor {
+    #[serde(default)]
+    pub login: Option<String>,
 }
 
 #[derive(Deserialize)]

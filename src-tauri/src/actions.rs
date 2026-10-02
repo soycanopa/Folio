@@ -22,6 +22,9 @@ pub struct ActionRunInfo {
     pub head_sha: Option<String>,
     pub head_branch: Option<String>,
     pub event: Option<String>,
+    /// Login de quien disparó (su "Triggered by"); None si GitHub no
+    /// reporta actor.
+    pub triggered_by: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
     pub run_started_at: Option<String>,
@@ -37,6 +40,7 @@ fn run_info(run: crate::gh_api::GhActionRun, workflow: &str) -> ActionRunInfo {
         head_sha: run.head_sha,
         head_branch: run.head_branch,
         event: run.event,
+        triggered_by: run.actor.and_then(|a| a.login),
         created_at: run.created_at,
         updated_at: run.updated_at,
         run_started_at: run.run_started_at,

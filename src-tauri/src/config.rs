@@ -220,6 +220,10 @@ pub struct Action {
     /// `ref` del dispatch; ausente/"current" → rama actual (su
     /// `resolveActionRef`, se resuelve al correr).
     pub action_ref: Option<String>,
+    /// Dónde vive el botón: "collection" (header de la colección),
+    /// "entry" (header de la entrada) o ausente (solo la página Actions
+    /// y el grupo raíz, como su `getSchemaActions`).
+    pub scope: Option<String>,
     /// Default true en su UI; `false` oculta "Cancel run".
     pub cancelable: Option<bool>,
     /// `confirm: bool` o `{title, message, button}`; default true.
@@ -412,11 +416,22 @@ fn parse_actions(v: Option<&Value>, ctx: &str, warnings: &mut Vec<String>) -> Ve
                 None
             }
         };
+        let scope = match get_str(m, "scope") {
+            None => None,
+            Some(s) if s == "collection" || s == "entry" => Some(s),
+            Some(other) => {
+                warnings.push(format!(
+                    "{ctx}: action {name} scope {other:?} no reconocido; se ignora"
+                ));
+                None
+            }
+        };
         out.push(Action {
             label: get_str(m, "label").unwrap_or_else(|| name.clone()),
             name,
             workflow,
             action_ref: get_str(m, "ref"),
+            scope,
             cancelable: m.get("cancelable").and_then(Value::as_bool),
             confirm,
             fields: parse_action_fields(m.get("fields"), ctx, warnings),
