@@ -1,3 +1,4 @@
+mod commit;
 mod entry;
 mod repo;
 mod state;
@@ -13,7 +14,8 @@ pub fn run() {
             repo::open_repo,
             repo::list_entries,
             entry::read_entry,
-            entry::write_entry
+            entry::write_entry,
+            commit::commit
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
