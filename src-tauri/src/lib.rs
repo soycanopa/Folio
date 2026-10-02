@@ -2,6 +2,7 @@ pub mod commit;
 pub mod config;
 pub mod entry;
 pub mod file_entry;
+pub mod gh_api;
 pub mod github;
 pub mod history;
 pub mod media;

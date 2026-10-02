@@ -314,7 +314,7 @@ pub fn list_repos(token: &str, login: &str, keyword: &str) -> Result<Vec<GhRepo>
         .collect())
 }
 
-fn urlencode(s: &str) -> String {
+pub(crate) fn urlencode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
