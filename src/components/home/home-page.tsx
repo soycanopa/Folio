@@ -48,7 +48,7 @@ export function HomePage({
 
   return (
     <div
-      data-tauri-drag-region="deep"
+      data-tauri-drag-region
       className="max-w-screen-sm mx-auto px-4 pt-12 pb-4 md:px-6 md:pt-14 md:pb-6 space-y-8"
     >
       {user && user.accounts.length > 0 ? (
