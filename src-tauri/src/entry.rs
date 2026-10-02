@@ -17,7 +17,7 @@ pub struct EntryContent {
 // Invariante Folio: un write de contenido resuelve dentro de las rutas que
 // el config declara. El parser de `.pages.yml` llega en Fase 1; lo exigible
 // en el spike es que el path no escape de la raíz del repo.
-fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, String> {
+pub(crate) fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let p = Path::new(rel);
     if p.is_absolute() {
         return Err(format!("path absoluto rechazado: {rel}"));
@@ -79,7 +79,7 @@ pub fn read_entry_at(root: &Path, path: &str) -> Result<EntryContent, String> {
 // Invariante Folio: un write de contenido tiene que resolver dentro de
 // `content[].path` o `media.input` del `.pages.yml` (AGENTS.md). Sin
 // config parseada no hay contra qué validar, así que se rechaza.
-fn ensure_writable(st: &RepoState, rel: &str) -> Result<(), String> {
+pub(crate) fn ensure_writable(st: &RepoState, rel: &str) -> Result<(), String> {
     let cfg = st
         .config
         .as_ref()

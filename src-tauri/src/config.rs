@@ -30,12 +30,16 @@ pub struct Field {
     pub help: Option<String>,
 }
 
-/// Solo colecciones (`type: collection`): `type: file` llega en v1 y
-/// `type: group` queda fuera; ambos se avisan y se ignoran.
+/// Colecciones (`type: collection`) y archivos únicos (`type: file`),
+/// que abren el formulario directo sin tabla. `type: group` queda
+/// fuera; se avisa y se ignora.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct ContentItem {
     pub name: String,
+    /// "collection" | "file".
+    pub kind: String,
     pub label: String,
+    /// Carpeta de la colección o archivo único del `type: file`.
     pub path: String,
     pub filename: Option<String>,
     pub fields: Vec<Field>,
@@ -149,13 +153,9 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
                     warnings.push("content: ítem sin name; ignorado".to_string());
                     continue;
                 };
-                match get_str(m, "type").as_deref() {
-                    None | Some("collection") => {}
-                    Some("file") => {
-                        warnings
-                            .push(format!("content {name}: type file llega en v1; ignorado"));
-                        continue;
-                    }
+                let kind = match get_str(m, "type").as_deref() {
+                    None | Some("collection") => "collection",
+                    Some("file") => "file",
                     Some("group") => {
                         warnings.push(format!(
                             "content {name}: type group sin soporte aún; ignorado"
@@ -169,6 +169,7 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
                         continue;
                     }
                 }
+                .to_string();
                 let Some(path) = get_str(m, "path") else {
                     warnings.push(format!("content {name}: colección sin path; ignorada"));
                     continue;
@@ -191,6 +192,7 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
                 });
                 content.push(ContentItem {
                     name,
+                    kind,
                     label,
                     path,
                     filename: get_str(m, "filename"),
@@ -247,11 +249,14 @@ mod tests {
     }
 
     #[test]
-    fn tipo_file_y_group_se_avisan_y_se_ignoran() {
-        let raw = "content:\n  - name: hero\n    label: Hero\n    type: file\n    path: src/hero.json\n    fields: []\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: title\n";
+    fn tipo_file_se_parsea_y_group_sigue_ignorado() {
+        let raw = "content:\n  - name: hero\n    label: Hero\n    type: file\n    path: src/content/hero.json\n    fields:\n      - name: heading\n        type: string\n  - name: grupo\n    type: group\n    path: x\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: title\n";
         let cfg = parse_config(raw).unwrap();
-        assert_eq!(cfg.content.len(), 1);
-        assert!(cfg.warnings.iter().any(|w| w.contains("hero") && w.contains("file")));
+        assert_eq!(cfg.content.len(), 2);
+        assert_eq!(cfg.content[0].kind, "file");
+        assert_eq!(cfg.content[0].path, "src/content/hero.json");
+        assert_eq!(cfg.content[1].kind, "collection");
+        assert!(cfg.warnings.iter().any(|w| w.contains("grupo") && w.contains("group")));
     }
 
     #[test]
