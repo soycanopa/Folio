@@ -44,14 +44,14 @@ type View =
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
-// Barra de arrastre universal: el Overlay quitó el title bar nativo y
-// las zonas de arrastre por pantalla eran parches frágiles. Esta franja
-// de 28px (donde viven los semáforos) es LA superficie para mover y
-// hacer zoom (doble-click) de la ventana, siempre y en toda pantalla.
+// Zona de agarre del Overlay (sin title bar visible): franja
+// transparente de 28px arriba de todo — donde viven los semáforos —
+// que existe en toda pantalla para mover la ventana y hacer zoom
+// (doble-click). No es un elemento visual: no tiene fondo.
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full flex-col">
-      <div data-tauri-drag-region className="h-7 shrink-0 bg-panel" />
+      <div data-tauri-drag-region className="h-7 shrink-0" />
       <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
