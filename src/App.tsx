@@ -13,7 +13,12 @@ import type {
 import { Sidebar } from "./components/Sidebar";
 import { CollectionTable, type EntryRow } from "./components/CollectionTable";
 import { EntryEditor, type Draft } from "./components/EntryEditor";
-import { CloneDialog, CommitDialog, NewEntryDialog } from "./components/Dialogs";
+import {
+  CloneDialog,
+  CommitDialog,
+  DiscardDialog,
+  NewEntryDialog,
+} from "./components/Dialogs";
 import { MediaView } from "./components/Media";
 
 type View =
@@ -36,6 +41,10 @@ export default function App() {
   const [newOpen, setNewOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [mediaItems, setMediaItems] = useState<MediaRef[]>([]);
+  /** Navegación bloqueada por cambios sin guardar: run() al resolver. */
+  const [guard, setGuard] = useState<null | "close" | { run: () => void }>(
+    null,
+  );
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -247,6 +256,13 @@ export default function App() {
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
 
+  // Cambiar de vista o de repo con buffer sucio avisa: guardar,
+  // descartar o cancelar (FLOW.md).
+  const guardNav = useCallback((run: () => void) => {
+    if (dirtyRef.current) setGuard({ run });
+    else run();
+  }, []);
+
   // Cmd+S guarda (IMPLEMENTATION.md, Fase 1).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -259,19 +275,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Cerrar con buffer sucio avisa (FLOW.md).
+  // Cerrar con buffer sucio avisa: guardar, descartar o cancelar
+  // (FLOW.md). Un commit ya hecho no bloquea.
   useEffect(() => {
     const promise = getCurrentWindow().onCloseRequested(async (event) => {
       if (!dirtyRef.current) return;
       event.preventDefault();
-      const saveFirst = await confirm(
-        'There are unsaved changes. Save before closing?',
-        { title: "Folio", kind: "warning" },
-      );
-      if (saveFirst) {
-        await saveRef.current();
-        await getCurrentWindow().close();
-      }
+      setGuard("close");
     });
     return () => {
       void promise.then((unlisten) => unlisten());
@@ -340,13 +350,15 @@ export default function App() {
             ? "__media__"
             : currentCollection?.name ?? null
         }
-        onSelect={selectItem}
-        onOpenRepo={pickFolder}
-        onClone={() => setCloneOpen(true)}
-        onMedia={() => {
-          setView({ kind: "media" });
-          void loadMedia();
-        }}
+        onSelect={(c) => guardNav(() => selectItem(c))}
+        onOpenRepo={() => guardNav(() => void pickFolder())}
+        onClone={() => guardNav(() => setCloneOpen(true))}
+        onMedia={() =>
+          guardNav(() => {
+            setView({ kind: "media" });
+            void loadMedia();
+          })
+        }
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
@@ -399,7 +411,7 @@ export default function App() {
             mediaInput={config?.media.input ?? null}
             mediaItems={mediaItems}
             onUploadMedia={uploadMedia}
-            onBack={() => selectCollection(view.collection)}
+            onBack={() => guardNav(() => selectCollection(view.collection))}
           />
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-ink-dim">
@@ -408,6 +420,33 @@ export default function App() {
         )}
         <StatusBar message={message} status={status} config={config} />
       </main>
+
+      {guard && (
+        <DiscardDialog
+          closeLabel={guard === "close" ? "Save & Close" : "Save"}
+          onSave={async () => {
+            const g = guard;
+            setGuard(null);
+            await saveRef.current();
+            if (g === "close") {
+              await getCurrentWindow().close();
+            } else {
+              g.run();
+            }
+          }}
+          onDiscard={() => {
+            const g = guard;
+            setGuard(null);
+            if (g === "close") {
+              // Descartar cierra sin volver a preguntar.
+              getCurrentWindow().destroy();
+            } else {
+              g.run();
+            }
+          }}
+          onCancel={() => setGuard(null)}
+        />
+      )}
 
       {commitOpen && view.kind === "entry" && (
         <CommitDialog

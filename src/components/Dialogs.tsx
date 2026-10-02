@@ -74,6 +74,40 @@ export function CommitDialog({
   );
 }
 
+export function DiscardDialog({
+  closeLabel,
+  onSave,
+  onDiscard,
+  onCancel,
+}: {
+  closeLabel: string;
+  onSave: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal title="Unsaved changes" onClose={onCancel}>
+      <p className="mb-4 text-sm text-ink-dim">
+        This entry has unsaved changes. Save them before continuing?
+      </p>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className={btnGhost}>
+          Cancel
+        </button>
+        <button
+          onClick={onDiscard}
+          className="rounded-lg px-3.5 py-1.5 text-sm text-danger hover:opacity-80"
+        >
+          Discard
+        </button>
+        <button onClick={onSave} className={btnPrimary}>
+          {closeLabel}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function CloneDialog({
   onClose,
   onClone,
