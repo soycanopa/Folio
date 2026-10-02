@@ -23,6 +23,17 @@ export function SignInScreen({
   const [waiting, setWaiting] = useState(true);
   const finished = useRef(false);
 
+  // Entra y arranca el Device Flow: sin esto la pantalla mostraba otro
+  // botón idéntico al del home y el doble-click sobre él movía la
+  // ventana. Guard por StrictMode (doble montaje en dev).
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    void handleGithubSignIn();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleGithubSignIn() {
     setBusy(true);
     setError("");
@@ -69,7 +80,7 @@ export function SignInScreen({
 
   return (
     <div
-      data-tauri-drag-region
+      data-tauri-drag-region="false"
       className="flex min-h-screen items-center justify-center p-4 md:p-6"
     >
       {/* Card elevada: panel es el oscuro-un-punto-más-claro del canvas. */}
