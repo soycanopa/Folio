@@ -156,7 +156,7 @@ fn read_json<T: serde::de::DeserializeOwned>(mut resp: Resp) -> Result<T, GhErro
 }
 
 fn get_json<T: serde::de::DeserializeOwned>(token: &str, url: String) -> Result<T, GhError> {
-    read_json(call(ureq::get(url), token)?)
+    read_json(call(agent().get(url), token)?)
 }
 
 fn put_json<T: serde::de::DeserializeOwned>(
@@ -164,7 +164,7 @@ fn put_json<T: serde::de::DeserializeOwned>(
     url: String,
     body: Value,
 ) -> Result<T, GhError> {
-    read_json(call_json(ureq::put(url), token, body)?)
+    read_json(call_json(agent().put(url), token, body)?)
 }
 
 /// Codifica un path repo-relativo para URL (segmento a segmento, sin
@@ -250,7 +250,7 @@ pub fn get_content(
     path: &str,
     git_ref: &str,
 ) -> Result<GhFile, GhError> {
-    let req = ureq::get(content_url(owner, repo, path)).query("ref", git_ref);
+    let req = agent().get(content_url(owner, repo, path)).query("ref", git_ref);
     read_json(call(req, token)?)
 }
 
@@ -264,7 +264,7 @@ pub fn get_content_dir(
     git_ref: &str,
 ) -> Result<Vec<GhFile>, GhError> {
     let dir = if path.is_empty() { ".".to_string() } else { path.to_string() };
-    let req = ureq::get(content_url(owner, repo, &dir)).query("ref", git_ref);
+    let req = agent().get(content_url(owner, repo, &dir)).query("ref", git_ref);
     read_json(call(req, token)?)
 }
 
@@ -315,7 +315,7 @@ pub fn delete_content(
     message: &str,
     sha: &str,
 ) -> Result<(), GhError> {
-    let req = ureq::delete(content_url(owner, repo, path))
+    let req = agent().delete(content_url(owner, repo, path))
         .query("branch", branch)
         .query("sha", sha)
         .query("message", message);
@@ -420,7 +420,7 @@ pub fn parse_tree_response(data: &Value) -> Result<Vec<TreeEntry>, GhError> {
 
 fn graphql(token: &str, query: &str, variables: Value) -> Result<Value, GhError> {
     let resp = call_json(
-        ureq::post(format!("{API}/graphql")),
+        agent().post(format!("{API}/graphql")),
         token,
         json!({ "query": query, "variables": variables }),
     )?;
@@ -487,7 +487,7 @@ pub fn get_tree_recursive(
     repo: &str,
     tree_sha: &str,
 ) -> Result<Vec<TreeItem>, GhError> {
-    let req = ureq::get(format!("{API}/repos/{owner}/{repo}/git/trees/{tree_sha}"))
+    let req = agent().get(format!("{API}/repos/{owner}/{repo}/git/trees/{tree_sha}"))
         .query("recursive", "true");
     let raw: TreeResponse = read_json(call(req, token)?)?;
     Ok(raw.tree)
@@ -548,7 +548,7 @@ pub fn update_branch_ref(
     sha: &str,
 ) -> Result<(), GhError> {
     let _: Value = call_json(
-        ureq::patch(format!("{API}/repos/{owner}/{repo}/git/refs/heads/{}", urlencode(branch))),
+        agent().patch(format!("{API}/repos/{owner}/{repo}/git/refs/heads/{}", urlencode(branch))),
         token,
         json!({ "sha": sha, "force": false }),
     )
@@ -606,7 +606,7 @@ pub fn list_commits(
     git_ref: &str,
     per_page: usize,
 ) -> Result<Vec<GhCommit>, GhError> {
-    let req = ureq::get(format!("{API}/repos/{owner}/{repo}/commits"))
+    let req = agent().get(format!("{API}/repos/{owner}/{repo}/commits"))
         .query("path", path)
         .query("sha", git_ref)
         .query("per_page", per_page.to_string());
@@ -644,7 +644,7 @@ fn download_via_contents(
     git_ref: &str,
 ) -> Result<Vec<u8>, GhError> {
     let resp = finish(
-        ureq::get(content_url(owner, repo, path))
+        agent().get(content_url(owner, repo, path))
             .header("Accept", "application/octet-stream")
             .header("Authorization", format!("Bearer {token}"))
             .header("User-Agent", "folio")
@@ -661,7 +661,7 @@ fn download_with_redirects(token: &str, url: &str) -> Result<Vec<u8>, GhError> {
     let mut current = url.to_string();
     for _ in 0..3 {
         let resp = finish(
-            ureq::get(&current)
+            agent().get(&current)
                 .header("Accept", "application/octet-stream")
                 .header("Authorization", format!("Bearer {token}"))
                 .header("User-Agent", "folio")
