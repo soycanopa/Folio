@@ -986,7 +986,10 @@ function StatusBar({
       {remote ? (
         <>
           <span className="text-ink">{summary.branch}</span>
-          <span className="text-sky-400">◆ GitHub (remote)</span>
+          <span className="flex items-center gap-1.5 rounded-full bg-raised px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-ink-dim">
+            <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
+            Remote
+          </span>
           {dirty && <span className="text-amber-400">● unsaved</span>}
         </>
       ) : (
