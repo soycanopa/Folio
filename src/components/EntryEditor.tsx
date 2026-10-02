@@ -271,9 +271,20 @@ export function EntryEditor({
                 }
               >
                 <RichText
+                  key={draft.path}
                   value={draft.body}
                   onChange={onBodyChange}
                   sourceMode={sourceMode}
+                  media={
+                    mediaInput
+                      ? {
+                          root,
+                          mediaInput,
+                          items: mediaItems,
+                          onUpload: onUploadMedia,
+                        }
+                      : undefined
+                  }
                 />
               </Suspense>
               {bodyField.help && (
