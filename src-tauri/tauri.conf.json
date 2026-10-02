@@ -15,7 +15,8 @@
         "title": "folio",
         "width": 1080,
         "height": 720,
-        "titleBarStyle": "Overlay",
+        "titleBarStyle": "Transparent",
+        "backgroundColor": "#0c0a09",
         "hiddenTitle": true,
         "acceptFirstMouse": true
       }

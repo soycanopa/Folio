@@ -44,43 +44,6 @@ type View =
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
-// Zona de agarre del Overlay (sin title bar visible): franja
-// transparente de 28px arriba de todo — donde viven los semáforos —
-// presente en toda pantalla. Llama directo a la API de window en vez
-// del script interno de drag; si falla, el error se muestra AQUÍ en
-// rojo para diagnosticar en vivo (permiso, capa nativa, lo que sea).
-function DragStrip() {
-  const [dragError, setDragError] = useState<string | null>(null);
-  return (
-    <div
-      className="relative h-7 shrink-0"
-      onMouseDown={(e) => {
-        if (e.button !== 0) return;
-        e.preventDefault();
-        getCurrentWindow()
-          .startDragging()
-          .then(() => setDragError(null))
-          .catch((err) => setDragError(String(err)));
-      }}
-    >
-      {dragError && (
-        <span className="absolute left-20 top-0 z-50 truncate text-[10px] text-red-400">
-          drag: {dragError}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full flex-col">
-      <DragStrip />
-      <div className="min-h-0 flex-1">{children}</div>
-    </div>
-  );
-}
-
 // El mensaje de su server al guardar, incluido el aviso de auto-rename.
 function savedMessage(path: string, savedAs: string): string {
   return savedAs !== path
@@ -652,17 +615,15 @@ export default function App() {
 
   if (view.kind === "signin") {
     return (
-      <Shell>
-        <SignInScreen
-          onStart={api.githubLoginStart}
-          onPoll={api.githubLoginPoll}
-          onAuthorized={async () => {
-            const session = await api.githubSession().catch(() => null);
-            setGhSession(session);
-            setView({ kind: "home" });
-          }}
-        />
-      </Shell>
+      <SignInScreen
+        onStart={api.githubLoginStart}
+        onPoll={api.githubLoginPoll}
+        onAuthorized={async () => {
+          const session = await api.githubSession().catch(() => null);
+          setGhSession(session);
+          setView({ kind: "home" });
+        }}
+      />
     );
   }
 
@@ -693,7 +654,7 @@ export default function App() {
 
   if (!summary) {
     return (
-      <Shell>
+      <>
         <HomePage
           user={homeUser}
           loadRepos={(keyword) => api.githubListRepos(keyword)}
@@ -703,7 +664,7 @@ export default function App() {
           onSignOut={() => void handleSignOut()}
         />
         {openModeDialog}
-      </Shell>
+      </>
     );
   }
 
@@ -713,9 +674,8 @@ export default function App() {
       : null;
 
   return (
-    <Shell>
-      <div className="flex h-full">
-        <Sidebar
+    <div className="flex h-full">
+      <Sidebar
         summary={summary}
         status={status}
         collections={config?.content ?? []}
@@ -975,8 +935,7 @@ export default function App() {
           }}
         />
       )}
-      </div>
-    </Shell>
+    </div>
   );
 }
 
