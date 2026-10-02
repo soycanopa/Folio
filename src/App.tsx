@@ -14,6 +14,12 @@ import { Sidebar } from "./components/Sidebar";
 import { CollectionTable, type EntryRow } from "./components/CollectionTable";
 import { EntryEditor, type Draft } from "./components/EntryEditor";
 import {
+  DEFAULT_LAYOUT,
+  Canvas,
+  slugOf,
+  type CanvasLayout,
+} from "./components/Canvas";
+import {
   CloneDialog,
   CommitDialog,
   DiscardDialog,
@@ -21,9 +27,13 @@ import {
 } from "./components/Dialogs";
 import { MediaView } from "./components/Media";
 
+// El canvas (v2) vive en la colección `showcase` del config (PRD.md).
+const CANVAS_NAME = "showcase";
+
 type View =
   | { kind: "empty" }
   | { kind: "media" }
+  | { kind: "canvas"; collection: ContentItem }
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
@@ -45,6 +55,13 @@ export default function App() {
   const [guard, setGuard] = useState<null | "close" | { run: () => void }>(
     null,
   );
+  const [canvasRows, setCanvasRows] = useState<
+    { path: string; values: Record<string, unknown> }[]
+  >([]);
+  const [canvasPath, setCanvasPath] = useState("");
+  const [canvasLayout, setCanvasLayout] = useState<CanvasLayout | null>(null);
+  const [canvasSnapshot, setCanvasSnapshot] = useState("");
+  const [canvasReturn, setCanvasReturn] = useState(false);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -139,6 +156,53 @@ export default function App() {
     [openFileEntry, selectCollection],
   );
 
+  // El canvas lee la colección showcase + su layout.json (FLOW.md v2).
+  // Las fichas sin nodo se materializan en cascada para que el primer
+  // snapshot sea estable (dirty solo tras un cambio real).
+  const openCanvas = useCallback(async (c: ContentItem) => {
+    try {
+      const layoutPath = `${c.path}/layout.json`;
+      let layout: CanvasLayout = DEFAULT_LAYOUT;
+      try {
+        const raw = await api.readFileEntry(layoutPath);
+        const data = raw.frontmatter as Partial<CanvasLayout>;
+        layout = {
+          viewport: data.viewport ?? DEFAULT_LAYOUT.viewport,
+          nodes: Array.isArray(data.nodes) ? data.nodes : [],
+        };
+      } catch {
+        // Sin layout.json todavía: arranca con el default.
+      }
+      const list = await api.listEntries(c.path);
+      const cards = await Promise.all(
+        list.map(async (e) => ({
+          path: e.path,
+          values: (await api.readEntry(e.path)).frontmatter,
+        })),
+      );
+      const nodes = [...layout.nodes];
+      cards.forEach((card, i) => {
+        const id = slugOf(card.path);
+        if (!nodes.some((n) => n.id === id)) {
+          nodes.push({
+            id,
+            x: 60 + (i % 4) * 260,
+            y: 60 + Math.floor(i / 4) * 240,
+            w: 220,
+          });
+        }
+      });
+      const full: CanvasLayout = { viewport: layout.viewport, nodes };
+      setCanvasRows(cards);
+      setCanvasPath(layoutPath);
+      setCanvasLayout(full);
+      setCanvasSnapshot(JSON.stringify(full));
+      setView({ kind: "canvas", collection: c });
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
   const openRepoFlow = useCallback(
     async (path: string) => {
       try {
@@ -225,12 +289,31 @@ export default function App() {
     [openEntry],
   );
 
-  const dirty =
-    view.kind === "entry" &&
-    snap(view.draft) !== view.draft.snapshot;
+  const entryDirty =
+    view.kind === "entry" && snap(view.draft) !== view.draft.snapshot;
+  const canvasDirty =
+    view.kind === "canvas" &&
+    canvasLayout !== null &&
+    JSON.stringify(canvasLayout) !== canvasSnapshot;
+  const dirty = entryDirty || canvasDirty;
 
   const save = useCallback(async () => {
     const v = viewRef.current;
+    if (v.kind === "canvas") {
+      try {
+        await api.writeFileEntry(
+          canvasPath,
+          canvasLayout as unknown as Record<string, unknown>,
+          "",
+        );
+        setCanvasSnapshot(JSON.stringify(canvasLayout));
+        refreshStatus();
+        setMessage(`Saved ${canvasPath}`);
+      } catch (e) {
+        setMessage(String(e));
+      }
+      return;
+    }
     if (v.kind !== "entry") return;
     try {
       const persist =
@@ -249,7 +332,7 @@ export default function App() {
     } catch (e) {
       setMessage(String(e));
     }
-  }, [loadRows, refreshStatus]);
+  }, [canvasLayout, canvasPath, loadRows, refreshStatus]);
 
   const saveRef = useRef(save);
   saveRef.current = save;
@@ -359,6 +442,14 @@ export default function App() {
             void loadMedia();
           })
         }
+        onCanvas={
+          config?.content.some((c) => c.name === CANVAS_NAME)
+            ? () => {
+                const c = config.content.find((x) => x.name === CANVAS_NAME);
+                if (c) guardNav(() => void openCanvas(c));
+              }
+            : undefined
+        }
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
@@ -370,6 +461,23 @@ export default function App() {
             rows={rows}
             onOpen={(path) => void openEntry(view.collection, path)}
             onNew={() => setNewOpen(true)}
+          />
+        ) : view.kind === "canvas" ? (
+          <Canvas
+            collection={view.collection}
+            root={summary.root}
+            mediaInput={config?.media.input ?? null}
+            cards={canvasRows}
+            layout={canvasLayout ?? DEFAULT_LAYOUT}
+            dirty={canvasDirty}
+            onChange={(l) => setCanvasLayout(l)}
+            onOpenEntry={(path) => {
+              setCanvasReturn(true);
+              void openEntry(view.collection, path);
+            }}
+            onSave={() => void save()}
+            onCommit={() => setCommitOpen(true)}
+            onPush={() => void push()}
           />
         ) : view.kind === "media" ? (
           <MediaView
@@ -411,7 +519,13 @@ export default function App() {
             mediaInput={config?.media.input ?? null}
             mediaItems={mediaItems}
             onUploadMedia={uploadMedia}
-            onBack={() => guardNav(() => selectCollection(view.collection))}
+            onBack={() => {
+              if (canvasReturn && view.collection.name === CANVAS_NAME) {
+                setView({ kind: "canvas", collection: view.collection });
+              } else {
+                selectCollection(view.collection);
+              }
+            }}
           />
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-ink-dim">
@@ -448,9 +562,13 @@ export default function App() {
         />
       )}
 
-      {commitOpen && view.kind === "entry" && (
+      {commitOpen && (view.kind === "entry" || view.kind === "canvas") && (
         <CommitDialog
-          defaultMessage={`Folio: update "${String(view.draft.fm.title ?? "")}"`}
+          defaultMessage={
+            view.kind === "canvas"
+              ? "Folio: update canvas layout"
+              : `Folio: update "${String(view.draft.fm.title ?? "")}"`
+          }
           onClose={() => setCommitOpen(false)}
           onConfirm={async (msg) => {
             setCommitOpen(false);

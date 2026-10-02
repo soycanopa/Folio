@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, CopyPlus, FileJson, FileText, FolderOpen, Image, NotebookPen } from "lucide-react";
+import { ChevronDown, CopyPlus, FileJson, FileText, FolderOpen, Image, LayoutGrid, NotebookPen } from "lucide-react";
 import type { ContentItem, RepoStatus, RepoSummary } from "../types";
 
 interface SidebarProps {
@@ -11,6 +11,8 @@ interface SidebarProps {
   onOpenRepo: () => void;
   onClone: () => void;
   onMedia: () => void;
+  /** Presente solo si el config tiene la colección del canvas. */
+  onCanvas?: () => void;
 }
 
 export function Sidebar({
@@ -22,6 +24,7 @@ export function Sidebar({
   onOpenRepo,
   onClone,
   onMedia,
+  onCanvas,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const repoName = summary.root.split("/").filter(Boolean).pop() ?? "repo";
@@ -95,6 +98,18 @@ export function Sidebar({
             <span className="truncate">{c.label}</span>
           </button>
         ))}
+
+        {onCanvas && (
+          <button
+            onClick={onCanvas}
+            className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
+              selected === "__canvas__" ? "bg-raised" : "hover:bg-raised/40"
+            }`}
+          >
+            <LayoutGrid size={15} className="shrink-0 text-ink-dim" />
+            <span className="truncate">Canvas</span>
+          </button>
+        )}
 
         <p className="px-2 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
           Media
