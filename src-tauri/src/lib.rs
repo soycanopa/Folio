@@ -1,7 +1,7 @@
-mod commit;
-mod entry;
-mod repo;
-mod state;
+pub mod commit;
+pub mod entry;
+pub mod repo;
+pub mod state;
 
 use state::AppState;
 
