@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Copy, Loader } from "lucide-react";
 import type { DeviceCodeStart, DevicePoll } from "../types";
-import { PagesMark } from "./PagesMark";
+import { FolioBrand } from "./FolioBrand";
 
 interface SignInScreenProps {
   onStart: () => Promise<DeviceCodeStart | null>;
@@ -74,22 +74,7 @@ export function SignInScreen({
     >
       {/* Card elevada: panel es el oscuro-un-punto-más-claro del canvas. */}
       <div className="w-full max-w-[340px] space-y-6 rounded-2xl border border-line bg-panel p-8 shadow-2xl">
-        <div className="space-y-3">
-          {/* El logo en verde con una sombra paralela suave del mismo
-              verde (glow). */}
-          <div
-            className="flex justify-center text-primary"
-            style={{
-              filter:
-                "drop-shadow(0 6px 16px color-mix(in oklch, var(--color-primary) 45%, transparent))",
-            }}
-          >
-            <PagesMark size={44} />
-          </div>
-          <h1 className="text-center text-xl font-semibold tracking-tight">
-            Folio
-          </h1>
-        </div>
+        <FolioBrand />
 
         {!device ? (
           <button
