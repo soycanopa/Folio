@@ -46,12 +46,36 @@ type View =
 
 // Zona de agarre del Overlay (sin title bar visible): franja
 // transparente de 28px arriba de todo — donde viven los semáforos —
-// que existe en toda pantalla para mover la ventana y hacer zoom
-// (doble-click). No es un elemento visual: no tiene fondo.
+// presente en toda pantalla. Llama directo a la API de window en vez
+// del script interno de drag; si falla, el error se muestra AQUÍ en
+// rojo para diagnosticar en vivo (permiso, capa nativa, lo que sea).
+function DragStrip() {
+  const [dragError, setDragError] = useState<string | null>(null);
+  return (
+    <div
+      className="relative h-7 shrink-0"
+      onMouseDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        getCurrentWindow()
+          .startDragging()
+          .then(() => setDragError(null))
+          .catch((err) => setDragError(String(err)));
+      }}
+    >
+      {dragError && (
+        <span className="absolute left-20 top-0 z-50 truncate text-[10px] text-red-400">
+          drag: {dragError}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full flex-col">
-      <div data-tauri-drag-region className="h-7 shrink-0" />
+      <DragStrip />
       <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
