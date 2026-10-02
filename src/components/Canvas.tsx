@@ -245,7 +245,6 @@ export function Canvas({
   return (
     <div className="flex h-full flex-col">
       <header
-          data-tauri-drag-region="deep"
           className="flex items-center gap-2 px-6 py-4">
         <h1 className="text-xl font-semibold">Canvas</h1>
         <span className="text-sm text-ink-dim">· {collection.label}</span>
