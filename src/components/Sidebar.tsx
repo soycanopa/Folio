@@ -10,6 +10,7 @@ interface SidebarProps {
   onSelect: (c: ContentItem) => void;
   onOpenRepo: () => void;
   onClone: () => void;
+  onMedia: () => void;
 }
 
 export function Sidebar({
@@ -20,6 +21,7 @@ export function Sidebar({
   onSelect,
   onOpenRepo,
   onClone,
+  onMedia,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const repoName = summary.root.split("/").filter(Boolean).pop() ?? "repo";
@@ -98,9 +100,10 @@ export function Sidebar({
           Media
         </p>
         <button
-          disabled
-          title="Media library arrives in v1"
-          className="flex w-full cursor-not-allowed items-center gap-2.5 rounded-lg px-2 py-1.5 text-left opacity-50"
+          onClick={onMedia}
+          className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
+            selected === "__media__" ? "bg-raised" : "hover:bg-raised/40"
+          }`}
         >
           <Image size={15} className="shrink-0 text-ink-dim" />
           <span className="truncate">Media</span>

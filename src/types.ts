@@ -2,6 +2,15 @@
 export interface Media {
   input?: string | null;
   output?: string | null;
+  /** false/ausente → conserva nombre; "safe" | "random". */
+  rename?: string | null;
+}
+
+export interface MediaRef {
+  path: string;
+  name: string;
+  /** Ruta pública (media.output + nombre) para el front matter. */
+  public_path: string;
 }
 
 export interface Field {

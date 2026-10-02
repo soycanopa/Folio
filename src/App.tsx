@@ -3,14 +3,22 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, NotebookPen } from "lucide-react";
 import { api } from "./api";
-import type { ContentItem, PagesConfig, RepoStatus, RepoSummary } from "./types";
+import type {
+  ContentItem,
+  MediaRef,
+  PagesConfig,
+  RepoStatus,
+  RepoSummary,
+} from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { CollectionTable, type EntryRow } from "./components/CollectionTable";
 import { EntryEditor, type Draft } from "./components/EntryEditor";
 import { CloneDialog, CommitDialog, NewEntryDialog } from "./components/Dialogs";
+import { MediaView } from "./components/Media";
 
 type View =
   | { kind: "empty" }
+  | { kind: "media" }
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
@@ -27,6 +35,7 @@ export default function App() {
   const [commitOpen, setCommitOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [mediaItems, setMediaItems] = useState<MediaRef[]>([]);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -49,6 +58,37 @@ export default function App() {
       setMessage(String(e));
     }
   }, []);
+
+  const loadMedia = useCallback(async () => {
+    try {
+      const items = await api.listMedia();
+      setMediaItems(items);
+    } catch {
+      // Sin media.input declarado no hay librería; la UI lo explica.
+      setMediaItems([]);
+    }
+  }, []);
+
+  const uploadMedia = useCallback(async (): Promise<MediaRef | null> => {
+    try {
+      const files = await openFolderDialog({
+        multiple: true,
+        title: "Choose images",
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"] }],
+      });
+      if (!Array.isArray(files) || files.length === 0) return null;
+      let last: MediaRef | null = null;
+      for (const f of files) {
+        last = await api.importMedia(f);
+      }
+      await loadMedia();
+      setMessage(`Imported ${files.length} file(s)`);
+      return last;
+    } catch (e) {
+      setMessage(String(e));
+      return null;
+    }
+  }, [loadMedia]);
 
   const selectCollection = useCallback(
     (c: ContentItem) => {
@@ -106,6 +146,7 @@ export default function App() {
         const cfg = await api.readConfig();
         setConfig(cfg);
         refreshStatus();
+        void loadMedia();
         if (cfg.content.length > 0) selectCollection(cfg.content[0]);
       } catch (e) {
         setMessage(String(e));
@@ -284,7 +325,9 @@ export default function App() {
   }
 
   const currentCollection =
-    view.kind !== "empty" ? view.collection : null;
+    view.kind === "collection" || view.kind === "entry"
+      ? view.collection
+      : null;
 
   return (
     <div className="flex h-full">
@@ -292,10 +335,18 @@ export default function App() {
         summary={summary}
         status={status}
         collections={config?.content ?? []}
-        selected={currentCollection?.name ?? null}
+        selected={
+          view.kind === "media"
+            ? "__media__"
+            : currentCollection?.name ?? null
+        }
         onSelect={selectItem}
         onOpenRepo={pickFolder}
         onClone={() => setCloneOpen(true)}
+        onMedia={() => {
+          setView({ kind: "media" });
+          void loadMedia();
+        }}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
@@ -307,6 +358,13 @@ export default function App() {
             rows={rows}
             onOpen={(path) => void openEntry(view.collection, path)}
             onNew={() => setNewOpen(true)}
+          />
+        ) : view.kind === "media" ? (
+          <MediaView
+            root={summary.root}
+            items={mediaItems}
+            hasMediaInput={Boolean(config?.media.input)}
+            onUpload={() => void uploadMedia()}
           />
         ) : view.kind === "entry" ? (
           <EntryEditor
@@ -337,6 +395,10 @@ export default function App() {
             onCommit={() => setCommitOpen(true)}
             onPush={() => void push()}
             showBack={view.collection.kind === "collection"}
+            root={summary.root}
+            mediaInput={config?.media.input ?? null}
+            mediaItems={mediaItems}
+            onUploadMedia={uploadMedia}
             onBack={() => selectCollection(view.collection)}
           />
         ) : (

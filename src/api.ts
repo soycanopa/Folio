@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   EntryContent,
   EntryRef,
+  MediaRef,
   NewEntry,
   PagesConfig,
   RepoStatus,
@@ -35,4 +36,6 @@ export const api = {
   ) => invoke<string>("write_file_entry", { path, frontmatter, body }),
   commit: (message: string) => invoke<string>("commit", { message }),
   push: () => invoke<void>("push"),
+  listMedia: () => invoke<MediaRef[]>("list_media"),
+  importMedia: (src: string) => invoke<MediaRef>("import_media", { src }),
 };

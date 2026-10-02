@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { ChevronRight, Clock, MoreHorizontal } from "lucide-react";
-import type { ContentItem } from "../types";
+import type { ContentItem, MediaRef } from "../types";
 import { FieldInput } from "./FieldInput";
 import { RichText } from "./RichText";
+import { MediaPickerDialog } from "./Media";
 
 export interface Draft {
   path: string;
@@ -18,6 +20,10 @@ interface EntryEditorProps {
   dirty: boolean;
   /** false para `type: file`: misma barra, sin breadcrumb de lista (UI.md). */
   showBack: boolean;
+  root: string;
+  mediaInput?: string | null;
+  mediaItems: MediaRef[];
+  onUploadMedia: () => Promise<MediaRef | null>;
   onFmChange: (name: string, value: unknown) => void;
   onBodyChange: (body: string) => void;
   onSave: () => void;
@@ -31,6 +37,10 @@ export function EntryEditor({
   draft,
   dirty,
   showBack,
+  root,
+  mediaInput,
+  mediaItems,
+  onUploadMedia,
   onFmChange,
   onBodyChange,
   onSave,
@@ -40,10 +50,19 @@ export function EntryEditor({
 }: EntryEditorProps) {
   const [sourceMode, setSourceMode] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [picking, setPicking] = useState<string | null>(null);
 
   const fmFields = collection.fields.filter((f) => f.name !== "body");
   const bodyField = collection.fields.find((f) => f.name === "body");
   const title = String(draft.fm.title ?? "");
+
+  // La ruta pública del front matter apunta al basename en media.input.
+  const previewSrcFor = (v: unknown): string | undefined => {
+    if (typeof v !== "string" || !v || !mediaInput) return undefined;
+    const name = v.split("/").pop();
+    if (!name) return undefined;
+    return convertFileSrc(`${root}/${mediaInput}/${name}`);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -132,6 +151,8 @@ export function EntryEditor({
                 field={field}
                 value={draft.fm[field.name]}
                 onChange={(v) => onFmChange(field.name, v)}
+                previewSrc={previewSrcFor(draft.fm[field.name])}
+                onPickImage={setPicking}
               />
               {field.help && (
                 <p className="text-xs text-ink-dim">{field.help}</p>
@@ -177,6 +198,19 @@ export function EntryEditor({
           )}
         </div>
       </div>
+
+      {picking && (
+        <MediaPickerDialog
+          root={root}
+          items={mediaItems}
+          onUpload={() => void onUploadMedia()}
+          onPick={(m) => {
+            onFmChange(picking, m.public_path);
+            setPicking(null);
+          }}
+          onClose={() => setPicking(null)}
+        />
+      )}
     </div>
   );
 }
