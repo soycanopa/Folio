@@ -142,12 +142,21 @@ export default function App() {
         title: "Choose files",
       });
       if (!Array.isArray(files) || files.length === 0) return null;
+      const remote = summaryRef.current?.mode === "remote";
       let last: MediaRef | null = null;
       for (const f of files) {
-        last = await api.importMedia(f);
+        // Remoto: cada archivo publica su commit — un toast por archivo,
+        // como su media-upload.
+        last = remote
+          ? await toastPromise(api.importMedia(f), {
+              loading: `Uploading ${f.split("/").pop()}`,
+              success: (m: MediaRef) => `Uploaded ${m.name}`,
+              error: (e: unknown) => String(e),
+            })
+          : await api.importMedia(f);
       }
       await loadMedia();
-      setMessage(`Imported ${files.length} file(s)`);
+      if (!remote) setMessage(`Imported ${files.length} file(s)`);
       return last;
     } catch (e) {
       setMessage(String(e));
@@ -161,7 +170,10 @@ export default function App() {
         await api.deleteMedia(m.path);
         await loadMedia();
         refreshStatus();
-        setMessage(`Deleted ${m.path} — commit to apply`);
+        const remote = summaryRef.current?.mode === "remote";
+        setMessage(
+          remote ? `Deleted ${m.path}` : `Deleted ${m.path} — commit to apply`,
+        );
       } catch (e) {
         setMessage(String(e));
       }
@@ -682,6 +694,7 @@ export default function App() {
           <Canvas
             collection={view.collection}
             root={summary.root}
+            remote={summary.mode === "remote"}
             mediaInput={config?.media.input ?? null}
             cards={canvasRows}
             layout={canvasLayout ?? DEFAULT_LAYOUT}
@@ -698,6 +711,7 @@ export default function App() {
         ) : view.kind === "media" ? (
           <MediaView
             root={summary.root}
+            remote={summary.mode === "remote"}
             items={mediaItems}
             hasMediaInput={Boolean(config?.media.input)}
             onUpload={() => void uploadMedia()}

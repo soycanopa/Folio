@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   ChevronRight,
@@ -11,6 +11,7 @@ import {
 import type { CommitInfo, ContentItem, MediaRef } from "../types";
 import { api } from "../api";
 import { relTime } from "../lib/time";
+import { resolveMediaSrc } from "../lib/media-src";
 import { FieldInput } from "./FieldInput";
 import { MediaPickerDialog } from "./Media";
 
@@ -95,11 +96,41 @@ export function EntryEditor({
   const bodyField = collection.fields.find((f) => f.name === "body");
   const title = String(draft.fm.title ?? "");
 
+  // Remoto: las previews de campos image se resuelven contra la API
+  // (raw URL o caché del core) y van llegando al mapa.
+  const imageNames = fmFields
+    .filter((f) => f.type === "image")
+    .map((f) => String(draft.fm[f.name] ?? "").split("/").pop())
+    .filter(Boolean)
+    .join(",");
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!remote || !mediaInput || !imageNames) return;
+    let alive = true;
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const n of imageNames.split(",")) {
+        try {
+          next[n] = await resolveMediaSrc(true, root, `${mediaInput}/${n}`);
+        } catch {
+          // sin preview para ese nombre
+        }
+      }
+      if (alive && Object.keys(next).length > 0) {
+        setThumbs((t) => ({ ...t, ...next }));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [remote, root, mediaInput, imageNames]);
+
   // La ruta pública del front matter apunta al basename en media.input.
   const previewSrcFor = (v: unknown): string | undefined => {
     if (typeof v !== "string" || !v || !mediaInput) return undefined;
     const name = v.split("/").pop();
     if (!name) return undefined;
+    if (remote) return thumbs[name];
     return convertFileSrc(`${root}/${mediaInput}/${name}`);
   };
 
@@ -346,6 +377,7 @@ export function EntryEditor({
                           mediaInput,
                           items: mediaItems,
                           onUpload: onUploadMedia,
+                          remote,
                         }
                       : undefined
                   }
@@ -363,6 +395,7 @@ export function EntryEditor({
         <MediaPickerDialog
           root={root}
           items={mediaItems}
+          remote={remote}
           onUpload={() => void onUploadMedia()}
           onPick={(m) => {
             onFmChange(picking, m.public_path);

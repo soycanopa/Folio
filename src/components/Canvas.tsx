@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Maximize, Minus, MoreHorizontal, Plus } from "lucide-react";
 import type { ContentItem } from "../types";
+import { resolveMediaSrc } from "../lib/media-src";
 
 // Esquema mínimo del TRD.md. El id referencia el slug de la ficha;
 // Folio no interpreta el lienzo al construir el sitio.
@@ -34,6 +35,8 @@ interface CanvasProps {
   cards: { path: string; values: Record<string, unknown> }[];
   layout: CanvasLayout;
   dirty: boolean;
+  /** Remoto: las previews se resuelven contra la API, no el disco. */
+  remote?: boolean;
   onChange: (l: CanvasLayout) => void;
   onOpenEntry: (path: string) => void;
   onSave: () => void;
@@ -54,6 +57,7 @@ export function Canvas({
   cards,
   layout,
   dirty,
+  remote,
   onChange,
   onOpenEntry,
   onSave,
@@ -195,14 +199,44 @@ export function Canvas({
   const imageField =
     collection.fields.find((f) => f.type === "image")?.name ?? null;
 
+  // Remoto: las previews de las fichas se resuelven contra la API y van
+  // llegando al mapa (raw URL o caché del core).
+  const cardImageNames = imageField
+    ? cards
+        .map((c) => String(c.values[imageField] ?? "").split("/").pop())
+        .filter(Boolean)
+        .join(",")
+    : "";
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!remote || !mediaInput || !cardImageNames) return;
+    let alive = true;
+    void (async () => {
+      const next: Record<string, string> = {};
+      for (const n of cardImageNames.split(",")) {
+        try {
+          next[n] = await resolveMediaSrc(true, root, `${mediaInput}/${n}`);
+        } catch {
+          // sin preview para ese nombre
+        }
+      }
+      if (alive && Object.keys(next).length > 0) {
+        setThumbs((t) => ({ ...t, ...next }));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [remote, root, mediaInput, cardImageNames]);
+
   const previewSrc = (values: Record<string, unknown>): string | undefined => {
     if (!imageField || !mediaInput) return undefined;
     const val = values[imageField];
     if (typeof val !== "string" || !val) return undefined;
     const name = val.split("/").pop();
-    return name
-      ? convertFileSrc(`${root}/${mediaInput}/${name}`)
-      : undefined;
+    if (!name) return undefined;
+    if (remote) return thumbs[name];
+    return convertFileSrc(`${root}/${mediaInput}/${name}`);
   };
 
   return (

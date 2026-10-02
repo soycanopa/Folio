@@ -1,16 +1,18 @@
 import { useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { Copy, FileText, Trash2, Upload } from "lucide-react";
 import type { MediaRef } from "../types";
+import { MediaImg } from "./MediaImg";
 
 interface MediaGridProps {
   root: string;
   items: MediaRef[];
   onPick?: (m: MediaRef) => void;
   onDelete?: (m: MediaRef) => void;
+  /** Remoto: los src se resuelven contra la API, no contra el disco. */
+  remote?: boolean;
 }
 
-export function MediaGrid({ root, items, onPick, onDelete }: MediaGridProps) {
+export function MediaGrid({ root, items, onPick, onDelete, remote }: MediaGridProps) {
   const [copied, setCopied] = useState<string | null>(null);
 
   const copyPath = (m: MediaRef) => {
@@ -33,8 +35,10 @@ export function MediaGrid({ root, items, onPick, onDelete }: MediaGridProps) {
           }`}
         >
           {m.is_image ? (
-            <img
-              src={convertFileSrc(`${root}/${m.path}`)}
+            <MediaImg
+              root={root}
+              path={m.path}
+              remote={remote ?? false}
               alt={m.name}
               className="aspect-square w-full rounded-md bg-canvas object-cover"
             />
@@ -85,9 +89,10 @@ interface MediaViewProps {
   hasMediaInput: boolean;
   onUpload: () => void;
   onDelete: (m: MediaRef) => void;
+  remote?: boolean;
 }
 
-export function MediaView({ root, items, hasMediaInput, onUpload, onDelete }: MediaViewProps) {
+export function MediaView({ root, items, hasMediaInput, onUpload, onDelete, remote }: MediaViewProps) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 px-6 pt-5 pb-4">
@@ -102,7 +107,7 @@ export function MediaView({ root, items, hasMediaInput, onUpload, onDelete }: Me
         </button>
       </header>
       <div className="flex-1 overflow-y-auto px-6 pb-10">
-        <MediaGrid root={root} items={items} onDelete={onDelete} />
+        <MediaGrid root={root} items={items} onDelete={onDelete} remote={remote} />
       </div>
     </div>
   );
@@ -114,6 +119,7 @@ interface MediaPickerDialogProps {
   onUpload: () => void;
   onPick: (m: MediaRef) => void;
   onClose: () => void;
+  remote?: boolean;
 }
 
 // El mismo grid de Media, como diálogo desde un campo image (UI.md).
@@ -123,6 +129,7 @@ export function MediaPickerDialog({
   onUpload,
   onPick,
   onClose,
+  remote,
 }: MediaPickerDialogProps) {
   return (
     <div
@@ -143,7 +150,7 @@ export function MediaPickerDialog({
           </button>
         </div>
         <div className="flex-1 overflow-y-auto pr-1">
-          <MediaGrid root={root} items={items} onPick={onPick} />
+          <MediaGrid root={root} items={items} onPick={onPick} remote={remote} />
         </div>
       </div>
     </div>
