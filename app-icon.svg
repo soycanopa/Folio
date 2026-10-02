@@ -1,0 +1,7 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Plato de 900x900 centrado en 1024: márgenes de Apple para el Dock. -->
+  <g transform="translate(62 62) scale(1.875)">
+    <rect width="480" height="480" rx="96" fill="#009869"/>
+    <path d="M60 132C60 92.2355 92.2355 60 132 60H240.177C259.272 60 277.586 67.5857 291.088 81.0883L398.912 188.912C412.414 202.414 420 220.728 420 239.823V348C420 387.764 387.764 420 348 420H132C92.2355 420 60 387.764 60 348V132Z" fill="#EDFDF5"/>
+  </g>
+</svg>

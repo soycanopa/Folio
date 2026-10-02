@@ -29,6 +29,9 @@ export const api = {
   ) => invoke<string>("write_entry", { path, frontmatter, body }),
   createEntry: (collection: string, slug: string) =>
     invoke<NewEntry>("create_entry", { collection, slug }),
+  renameEntry: (path: string, newName: string) =>
+    invoke<string>("rename_entry", { path, newName }),
+  deleteEntry: (path: string) => invoke<void>("delete_entry", { path }),
   writeFileEntry: (
     path: string,
     frontmatter: Record<string, unknown>,
@@ -38,6 +41,27 @@ export const api = {
   push: () => invoke<void>("push"),
   listMedia: () => invoke<MediaRef[]>("list_media"),
   importMedia: (src: string) => invoke<MediaRef>("import_media", { src }),
+  deleteMedia: (path: string) => invoke<void>("delete_media", { path }),
+  githubLoginStart: () =>
+    invoke<import("./types").DeviceCodeStart>("github_login_start"),
+  githubLoginPoll: (deviceCode: string) =>
+    invoke<import("./types").DevicePoll>("github_login_poll", { deviceCode }),
+  githubSession: () =>
+    invoke<import("./types").GithubUser | null>("github_session"),
+  githubLogout: () => invoke<void>("github_logout"),
+  githubListRepos: (keyword: string) =>
+    invoke<import("./types").GhRepo[]>("github_list_repos", { keyword }),
+  listRecentRepos: () =>
+    invoke<import("./types").RecentRepo[]>("list_recent_repos"),
+  addRecentRepo: (path: string, ownerRepo?: string) =>
+    invoke<import("./types").RecentRepo[]>("add_recent_repo", {
+      path,
+      ownerRepo: ownerRepo ?? null,
+    }),
+  githubCreateFromTemplate: (template: string, name: string) =>
+    invoke<string>("github_create_from_template", { template, name }),
+  removeRecentRepo: (path: string) =>
+    invoke<import("./types").RecentRepo[]>("remove_recent_repo", { path }),
   fileHistory: (path: string) =>
     invoke<import("./types").CommitInfo[]>("file_history", { path }),
 };

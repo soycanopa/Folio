@@ -11,6 +11,14 @@ export interface MediaRef {
   name: string;
   /** Ruta pública (media.output + nombre) para el front matter. */
   public_path: string;
+  /** true si la extensión es de imagen (thumbnail en el grid). */
+  is_image: boolean;
+}
+
+export interface Operations {
+  create: boolean;
+  rename: boolean;
+  delete: boolean;
 }
 
 export interface Field {
@@ -19,6 +27,8 @@ export interface Field {
   type: string;
   required: boolean;
   help?: string | null;
+  /** Options de un select. */
+  values?: string[];
 }
 
 export interface ViewCfg {
@@ -36,6 +46,9 @@ export interface ContentItem {
   filename?: string | null;
   fields: Field[];
   view?: ViewCfg | null;
+  operations: Operations;
+  /** Label del `type: group` que lo contiene. */
+  group?: string | null;
 }
 
 export interface PagesConfig {
@@ -71,6 +84,42 @@ export interface EntryContent {
 export interface NewEntry {
   path: string;
   existed: boolean;
+}
+
+export interface DeviceCodeStart {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  interval: number;
+  expires_in: number;
+}
+
+export type DevicePoll =
+  | { status: "pending" }
+  | { status: "slow_down" }
+  | { status: "authorized"; access_token: string }
+  | { status: "denied" }
+  | { status: "expired" };
+
+export interface GithubUser {
+  login: string;
+}
+
+export interface GhRepo {
+  repo: string;
+  owner: string;
+  private: boolean;
+  /** ISO 8601, como su endpoint /api/repos/{login}. */
+  updatedAt: string;
+  defaultBranch: string;
+}
+
+export interface RecentRepo {
+  path: string;
+  /** Unix seconds de la última apertura; 0 si el registro es viejo. */
+  last_open: number;
+  /** owner/repo si el proyecto vino de GitHub. */
+  owner_repo?: string | null;
 }
 
 export interface CommitInfo {

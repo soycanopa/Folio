@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, open as openFolderDialog } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, NotebookPen } from "lucide-react";
 import { api } from "./api";
 import type {
   ContentItem,
+  GithubUser,
   MediaRef,
   PagesConfig,
   RepoStatus,
@@ -13,12 +13,33 @@ import type {
 import { Sidebar } from "./components/Sidebar";
 import { CollectionTable, type EntryRow } from "./components/CollectionTable";
 import { EntryEditor, type Draft } from "./components/EntryEditor";
-import { CloneDialog, CommitDialog, NewEntryDialog } from "./components/Dialogs";
+import {
+  DEFAULT_LAYOUT,
+  Canvas,
+  slugOf,
+  type CanvasLayout,
+} from "./components/Canvas";
+import {
+  CloneDialog,
+  CommitDialog,
+  DiscardDialog,
+  NewEntryDialog,
+} from "./components/Dialogs";
 import { MediaView } from "./components/Media";
+import { HomePage } from "./components/home/home-page";
+import { trackVisit } from "./lib/tracker";
+import { toast } from "sonner";
+import { SignInScreen } from "./components/SignInScreen";
+
+// El canvas (v2) vive en la colección `showcase` del config (PRD.md).
+const CANVAS_NAME = "showcase";
 
 type View =
+  | { kind: "home" }
+  | { kind: "signin" }
   | { kind: "empty" }
   | { kind: "media" }
+  | { kind: "canvas"; collection: ContentItem }
   | { kind: "collection"; collection: ContentItem }
   | { kind: "entry"; collection: ContentItem; draft: Draft };
 
@@ -29,13 +50,25 @@ export default function App() {
   const [summary, setSummary] = useState<RepoSummary | null>(null);
   const [config, setConfig] = useState<PagesConfig | null>(null);
   const [status, setStatus] = useState<RepoStatus | null>(null);
-  const [view, setView] = useState<View>({ kind: "empty" });
+  const [view, setView] = useState<View>({ kind: "home" });
+  const [ghSession, setGhSession] = useState<GithubUser | null>(null);
   const [rows, setRows] = useState<EntryRow[]>([]);
   const [message, setMessage] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [mediaItems, setMediaItems] = useState<MediaRef[]>([]);
+  /** Navegación bloqueada por cambios sin guardar: run() al resolver. */
+  const [guard, setGuard] = useState<null | "close" | { run: () => void }>(
+    null,
+  );
+  const [canvasRows, setCanvasRows] = useState<
+    { path: string; values: Record<string, unknown> }[]
+  >([]);
+  const [canvasPath, setCanvasPath] = useState("");
+  const [canvasLayout, setCanvasLayout] = useState<CanvasLayout | null>(null);
+  const [canvasSnapshot, setCanvasSnapshot] = useState("");
+  const [canvasReturn, setCanvasReturn] = useState(false);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -73,8 +106,7 @@ export default function App() {
     try {
       const files = await openFolderDialog({
         multiple: true,
-        title: "Choose images",
-        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"] }],
+        title: "Choose files",
       });
       if (!Array.isArray(files) || files.length === 0) return null;
       let last: MediaRef | null = null;
@@ -89,6 +121,20 @@ export default function App() {
       return null;
     }
   }, [loadMedia]);
+
+  const deleteMedia = useCallback(
+    async (m: MediaRef) => {
+      try {
+        await api.deleteMedia(m.path);
+        await loadMedia();
+        refreshStatus();
+        setMessage(`Deleted ${m.path} — commit to apply`);
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [loadMedia, refreshStatus],
+  );
 
   const selectCollection = useCallback(
     (c: ContentItem) => {
@@ -130,12 +176,59 @@ export default function App() {
     [openFileEntry, selectCollection],
   );
 
+  // El canvas lee la colección showcase + su layout.json (FLOW.md v2).
+  // Las fichas sin nodo se materializan en cascada para que el primer
+  // snapshot sea estable (dirty solo tras un cambio real).
+  const openCanvas = useCallback(async (c: ContentItem) => {
+    try {
+      const layoutPath = `${c.path}/layout.json`;
+      let layout: CanvasLayout = DEFAULT_LAYOUT;
+      try {
+        const raw = await api.readFileEntry(layoutPath);
+        const data = raw.frontmatter as Partial<CanvasLayout>;
+        layout = {
+          viewport: data.viewport ?? DEFAULT_LAYOUT.viewport,
+          nodes: Array.isArray(data.nodes) ? data.nodes : [],
+        };
+      } catch {
+        // Sin layout.json todavía: arranca con el default.
+      }
+      const list = await api.listEntries(c.path);
+      const cards = await Promise.all(
+        list.map(async (e) => ({
+          path: e.path,
+          values: (await api.readEntry(e.path)).frontmatter,
+        })),
+      );
+      const nodes = [...layout.nodes];
+      cards.forEach((card, i) => {
+        const id = slugOf(card.path);
+        if (!nodes.some((n) => n.id === id)) {
+          nodes.push({
+            id,
+            x: 60 + (i % 4) * 260,
+            y: 60 + Math.floor(i / 4) * 240,
+            w: 220,
+          });
+        }
+      });
+      const full: CanvasLayout = { viewport: layout.viewport, nodes };
+      setCanvasRows(cards);
+      setCanvasPath(layoutPath);
+      setCanvasLayout(full);
+      setCanvasSnapshot(JSON.stringify(full));
+      setView({ kind: "canvas", collection: c });
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
   const openRepoFlow = useCallback(
     async (path: string) => {
       try {
         const s = await api.openRepo(path);
         setSummary(s);
-        localStorage.setItem("folio:lastRepo", path);
+        api.addRecentRepo(path).catch(() => undefined);
         setStatus(null);
         setView({ kind: "empty" });
         setRows([]);
@@ -155,11 +248,26 @@ export default function App() {
     [refreshStatus, selectCollection],
   );
 
-  // Reabrir el último repo (IMPLEMENTATION.md, Fase 1).
+  // El home arranca con los proyectos recientes; la lista vieja de
+  // localStorage migra una única vez al disco del core.
   useEffect(() => {
+    api
+      .githubSession()
+      .then((session) => {
+        setGhSession(session);
+      })
+      .catch(() => undefined);
     const last = localStorage.getItem("folio:lastRepo");
-    if (last) void openRepoFlow(last);
-  }, [openRepoFlow]);
+    api
+      .listRecentRepos()
+      .then(async (list) => {
+        if (last && list.length === 0) {
+          await api.addRecentRepo(last);
+          localStorage.removeItem("folio:lastRepo");
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   const openEntry = useCallback(
     async (collection: ContentItem, path: string) => {
@@ -216,12 +324,31 @@ export default function App() {
     [openEntry],
   );
 
-  const dirty =
-    view.kind === "entry" &&
-    snap(view.draft) !== view.draft.snapshot;
+  const entryDirty =
+    view.kind === "entry" && snap(view.draft) !== view.draft.snapshot;
+  const canvasDirty =
+    view.kind === "canvas" &&
+    canvasLayout !== null &&
+    JSON.stringify(canvasLayout) !== canvasSnapshot;
+  const dirty = entryDirty || canvasDirty;
 
   const save = useCallback(async () => {
     const v = viewRef.current;
+    if (v.kind === "canvas") {
+      try {
+        await api.writeFileEntry(
+          canvasPath,
+          canvasLayout as unknown as Record<string, unknown>,
+          "",
+        );
+        setCanvasSnapshot(JSON.stringify(canvasLayout));
+        refreshStatus();
+        setMessage(`Saved ${canvasPath}`);
+      } catch (e) {
+        setMessage(String(e));
+      }
+      return;
+    }
     if (v.kind !== "entry") return;
     try {
       const persist =
@@ -240,12 +367,71 @@ export default function App() {
     } catch (e) {
       setMessage(String(e));
     }
-  }, [loadRows, refreshStatus]);
+  }, [canvasLayout, canvasPath, loadRows, refreshStatus]);
 
   const saveRef = useRef(save);
   saveRef.current = save;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+
+  // Cambiar de vista o de repo con buffer sucio avisa: guardar,
+  // descartar o cancelar (FLOW.md).
+  const guardNav = useCallback((run: () => void) => {
+    if (dirtyRef.current) setGuard({ run });
+    else run();
+  }, []);
+
+  const goHome = useCallback(() => {
+    guardNav(() => setView({ kind: "home" }));
+  }, [guardNav]);
+
+
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await api.githubLogout();
+      setGhSession(null);
+    } catch (e) {
+      setMessage(String(e));
+    }
+  }, []);
+
+  // El Open de su home: clona en la carpeta que elijas y registra la
+  // visita como su tracker.
+  const handleOpenRepo = useCallback(
+    async (visit: { owner: string; repo: string; branch: string }) => {
+      try {
+        const dest = await openFolderDialog({
+          directory: true,
+          title: `Choose where to clone ${visit.repo}`,
+        });
+        if (typeof dest !== "string") return;
+        const target = `${dest}/${visit.repo}`;
+        await api.cloneRepo(
+          `https://github.com/${visit.owner}/${visit.repo}.git`,
+          target,
+        );
+        trackVisit(visit.owner, visit.repo, visit.branch);
+        await openRepoFlow(target);
+      } catch (e) {
+        setMessage(String(e));
+      }
+    },
+    [openRepoFlow],
+  );
+
+  const handleCreateTemplate = useCallback(
+    async (repository: string, name: string): Promise<string | null> => {
+      try {
+        const fullName = await api.githubCreateFromTemplate(repository, name);
+        return `Created ${fullName} on your account.`;
+      } catch (e) {
+        toast.error(String(e));
+        return null;
+      }
+    },
+    [],
+  );
 
   // Cmd+S guarda (IMPLEMENTATION.md, Fase 1).
   useEffect(() => {
@@ -259,19 +445,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Cerrar con buffer sucio avisa (FLOW.md).
+  // Cerrar con buffer sucio avisa: guardar, descartar o cancelar
+  // (FLOW.md). Un commit ya hecho no bloquea.
   useEffect(() => {
     const promise = getCurrentWindow().onCloseRequested(async (event) => {
       if (!dirtyRef.current) return;
       event.preventDefault();
-      const saveFirst = await confirm(
-        'There are unsaved changes. Save before closing?',
-        { title: "Folio", kind: "warning" },
-      );
-      if (saveFirst) {
-        await saveRef.current();
-        await getCurrentWindow().close();
-      }
+      setGuard("close");
     });
     return () => {
       void promise.then((unlisten) => unlisten());
@@ -302,25 +482,34 @@ export default function App() {
 
   // ---- render ----
 
+  if (view.kind === "signin") {
+    return (
+      <SignInScreen
+        onStart={api.githubLoginStart}
+        onPoll={api.githubLoginPoll}
+        onAuthorized={async () => {
+          const session = await api.githubSession().catch(() => null);
+          setGhSession(session);
+          setView({ kind: "home" });
+        }}
+      />
+    );
+  }
+
+  const homeUser = ghSession
+    ? { accounts: [{ login: ghSession.login, repositorySelection: "all" as const }] }
+    : null;
+
   if (!summary) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-4">
-        <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent text-accent-ink">
-          <NotebookPen size={24} />
-        </span>
-        <h1 className="text-2xl font-semibold">Folio</h1>
-        <p className="max-w-xs text-center text-sm text-ink-dim">
-          Edit the content of a local repository, like Pages CMS without the
-          cloud.
-        </p>
-        <button
-          onClick={pickFolder}
-          className="mt-2 flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-ink"
-        >
-          <FolderOpen size={15} /> Open folder…
-        </button>
-        <StatusBar message={message} status={status} config={config} />
-      </div>
+      <HomePage
+        user={homeUser}
+        loadRepos={(keyword) => api.githubListRepos(keyword)}
+        onOpenRepo={(v) => void handleOpenRepo(v)}
+        onCreateTemplate={handleCreateTemplate}
+        onSignIn={() => setView({ kind: "signin" })}
+        onSignOut={() => void handleSignOut()}
+      />
     );
   }
 
@@ -340,18 +529,44 @@ export default function App() {
             ? "__media__"
             : currentCollection?.name ?? null
         }
-        onSelect={selectItem}
-        onOpenRepo={pickFolder}
-        onClone={() => setCloneOpen(true)}
-        onMedia={() => {
-          setView({ kind: "media" });
-          void loadMedia();
-        }}
+        onSelect={(c) => guardNav(() => selectItem(c))}
+        onOpenRepo={() => guardNav(() => void pickFolder())}
+        onClone={() => guardNav(() => setCloneOpen(true))}
+        onMedia={() =>
+          guardNav(() => {
+            setView({ kind: "media" });
+            void loadMedia();
+          })
+        }
+        onCanvas={
+          config?.content.some((c) => c.name === CANVAS_NAME)
+            ? () => {
+                const c = config.content.find((x) => x.name === CANVAS_NAME);
+                if (c) guardNav(() => void openCanvas(c));
+              }
+            : undefined
+        }
+        onHome={goHome}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
         {!config ? (
           <EmptyConfig summary={summary} onPick={pickFolder} />
+        ) : view.kind === "home" ? (
+          <HomePage
+            user={homeUser}
+            loadRepos={(keyword) => api.githubListRepos(keyword)}
+            onSignOut={() => void handleSignOut()}
+            onOpenRepo={(v) => guardNav(() => void handleOpenRepo(v))}
+            onCreateTemplate={(t, n) =>
+              new Promise<string | null>((resolve) => {
+                guardNav(() => {
+                  void handleCreateTemplate(t, n).then(resolve);
+                });
+              })
+            }
+            onSignIn={() => setView({ kind: "signin" })}
+          />
         ) : view.kind === "collection" ? (
           <CollectionTable
             collection={view.collection}
@@ -359,12 +574,30 @@ export default function App() {
             onOpen={(path) => void openEntry(view.collection, path)}
             onNew={() => setNewOpen(true)}
           />
+        ) : view.kind === "canvas" ? (
+          <Canvas
+            collection={view.collection}
+            root={summary.root}
+            mediaInput={config?.media.input ?? null}
+            cards={canvasRows}
+            layout={canvasLayout ?? DEFAULT_LAYOUT}
+            dirty={canvasDirty}
+            onChange={(l) => setCanvasLayout(l)}
+            onOpenEntry={(path) => {
+              setCanvasReturn(true);
+              void openEntry(view.collection, path);
+            }}
+            onSave={() => void save()}
+            onCommit={() => setCommitOpen(true)}
+            onPush={() => void push()}
+          />
         ) : view.kind === "media" ? (
           <MediaView
             root={summary.root}
             items={mediaItems}
             hasMediaInput={Boolean(config?.media.input)}
             onUpload={() => void uploadMedia()}
+            onDelete={(m) => void deleteMedia(m)}
           />
         ) : view.kind === "entry" ? (
           <EntryEditor
@@ -394,12 +627,42 @@ export default function App() {
             onSave={() => void save()}
             onCommit={() => setCommitOpen(true)}
             onPush={() => void push()}
+            onRename={async (newName) => {
+              const v = viewRef.current;
+              if (v.kind !== "entry") return;
+              try {
+                const newPath = await api.renameEntry(v.draft.path, newName);
+                refreshStatus();
+                setMessage(`Renamed to ${newName} — commit to apply`);
+                await openEntry(v.collection, newPath);
+              } catch (e) {
+                setMessage(String(e));
+              }
+            }}
+            onDelete={async () => {
+              const v = viewRef.current;
+              if (v.kind !== "entry") return;
+              try {
+                await api.deleteEntry(v.draft.path);
+                refreshStatus();
+                setMessage(`Deleted ${v.draft.path} — commit to apply`);
+                selectCollection(v.collection);
+              } catch (e) {
+                setMessage(String(e));
+              }
+            }}
             showBack={view.collection.kind === "collection"}
             root={summary.root}
             mediaInput={config?.media.input ?? null}
             mediaItems={mediaItems}
             onUploadMedia={uploadMedia}
-            onBack={() => selectCollection(view.collection)}
+            onBack={() => {
+              if (canvasReturn && view.collection.name === CANVAS_NAME) {
+                setView({ kind: "canvas", collection: view.collection });
+              } else {
+                selectCollection(view.collection);
+              }
+            }}
           />
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-ink-dim">
@@ -409,9 +672,40 @@ export default function App() {
         <StatusBar message={message} status={status} config={config} />
       </main>
 
-      {commitOpen && view.kind === "entry" && (
+      {guard && (
+        <DiscardDialog
+          closeLabel={guard === "close" ? "Save & Close" : "Save"}
+          onSave={async () => {
+            const g = guard;
+            setGuard(null);
+            await saveRef.current();
+            if (g === "close") {
+              await getCurrentWindow().close();
+            } else {
+              g.run();
+            }
+          }}
+          onDiscard={() => {
+            const g = guard;
+            setGuard(null);
+            if (g === "close") {
+              // Descartar cierra sin volver a preguntar.
+              getCurrentWindow().destroy();
+            } else {
+              g.run();
+            }
+          }}
+          onCancel={() => setGuard(null)}
+        />
+      )}
+
+      {commitOpen && (view.kind === "entry" || view.kind === "canvas") && (
         <CommitDialog
-          defaultMessage={`Folio: update "${String(view.draft.fm.title ?? "")}"`}
+          defaultMessage={
+            view.kind === "canvas"
+              ? "Folio: update canvas layout"
+              : `Folio: update "${String(view.draft.fm.title ?? "")}"`
+          }
           onClose={() => setCommitOpen(false)}
           onConfirm={async (msg) => {
             setCommitOpen(false);

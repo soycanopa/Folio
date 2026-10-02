@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ChevronDown, CopyPlus, FileJson, FileText, FolderOpen, Image, NotebookPen } from "lucide-react";
+import { ChevronDown, CopyPlus, FolderGit2, FileJson, FileText, FolderOpen, Image, LayoutGrid } from "lucide-react";
+import { PagesMark } from "./PagesMark";
 import type { ContentItem, RepoStatus, RepoSummary } from "../types";
 
 interface SidebarProps {
@@ -11,6 +12,9 @@ interface SidebarProps {
   onOpenRepo: () => void;
   onClone: () => void;
   onMedia: () => void;
+  /** Presente solo si el config tiene la colección del canvas. */
+  onCanvas?: () => void;
+  onHome: () => void;
 }
 
 export function Sidebar({
@@ -22,6 +26,8 @@ export function Sidebar({
   onOpenRepo,
   onClone,
   onMedia,
+  onCanvas,
+  onHome,
 }: SidebarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const repoName = summary.root.split("/").filter(Boolean).pop() ?? "repo";
@@ -30,9 +36,13 @@ export function Sidebar({
   return (
     <aside className="flex h-full w-56 shrink-0 flex-col bg-panel border-r border-line">
       <div className="relative mx-2 mt-2 flex items-center gap-3 rounded-lg px-3 py-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent text-accent-ink">
-          <NotebookPen size={16} />
-        </span>
+        <button
+          onClick={onHome}
+          title="All projects"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+        >
+          <PagesMark size={18} />
+        </button>
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{repoName}</span>
           <span className="block truncate text-xs text-ink-dim">
@@ -70,6 +80,16 @@ export function Sidebar({
               >
                 <CopyPlus size={14} /> Clone from GitHub…
               </button>
+              <div className="my-1 border-t border-line" />
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  onHome();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-raised"
+              >
+                <FolderGit2 size={14} /> All projects…
+              </button>
             </div>
           </>
         )}
@@ -79,22 +99,45 @@ export function Sidebar({
         <p className="px-2 pb-1 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
           Content
         </p>
-        {collections.map((c) => (
+        {collections.map((c, i) => {
+          const prev = i > 0 ? collections[i - 1] : null;
+          const showGroupLabel =
+            c.group != null && c.group !== (prev?.group ?? null);
+          return (
+            <div key={c.name}>
+              {showGroupLabel && (
+                <p className="px-2 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
+                  {c.group}
+                </p>
+              )}
+              <button
+                onClick={() => onSelect(c)}
+                className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
+                  selected === c.name ? "bg-raised" : "hover:bg-raised/40"
+                }`}
+              >
+                {c.kind === "file" ? (
+                  <FileJson size={15} className="shrink-0 text-ink-dim" />
+                ) : (
+                  <FileText size={15} className="shrink-0 text-ink-dim" />
+                )}
+                <span className="truncate">{c.label}</span>
+              </button>
+            </div>
+          );
+        })}
+
+        {onCanvas && (
           <button
-            key={c.name}
-            onClick={() => onSelect(c)}
+            onClick={onCanvas}
             className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left ${
-              selected === c.name ? "bg-raised" : "hover:bg-raised/40"
+              selected === "__canvas__" ? "bg-raised" : "hover:bg-raised/40"
             }`}
           >
-            {c.kind === "file" ? (
-              <FileJson size={15} className="shrink-0 text-ink-dim" />
-            ) : (
-              <FileText size={15} className="shrink-0 text-ink-dim" />
-            )}
-            <span className="truncate">{c.label}</span>
+            <LayoutGrid size={15} className="shrink-0 text-ink-dim" />
+            <span className="truncate">Canvas</span>
           </button>
-        ))}
+        )}
 
         <p className="px-2 pb-1 pt-5 text-[11px] font-medium uppercase tracking-wider text-ink-dim">
           Media
@@ -115,7 +158,7 @@ export function Sidebar({
           F
           <span
             className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-panel ${
-              dirty ? "bg-amber-400" : "bg-accent"
+              dirty ? "bg-amber-400" : "bg-primary"
             }`}
             title={dirty ? "Uncommitted changes" : "Clean"}
           />

@@ -1,41 +1,78 @@
+import { useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Upload } from "lucide-react";
+import { Copy, FileText, Trash2, Upload } from "lucide-react";
 import type { MediaRef } from "../types";
-
-const IMAGE_FILTERS = [
-  {
-    name: "Images",
-    extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"],
-  },
-];
 
 interface MediaGridProps {
   root: string;
   items: MediaRef[];
   onPick?: (m: MediaRef) => void;
+  onDelete?: (m: MediaRef) => void;
 }
 
-export function MediaGrid({ root, items, onPick }: MediaGridProps) {
+export function MediaGrid({ root, items, onPick, onDelete }: MediaGridProps) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyPath = (m: MediaRef) => {
+    void navigator.clipboard.writeText(m.public_path).then(() => {
+      setCopied(m.path);
+      window.setTimeout(() => setCopied(null), 1500);
+    });
+  };
+
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
       {items.map((m) => (
-        <button
+        <div
           key={m.path}
+          role={onPick ? "button" : undefined}
           onClick={() => onPick?.(m)}
           title={m.public_path}
-          className="flex flex-col gap-1.5 rounded-lg border border-line p-2 text-left hover:bg-panel"
+          className={`group relative flex flex-col gap-1.5 rounded-lg border border-line p-2 text-left ${
+            onPick ? "cursor-pointer hover:bg-panel" : ""
+          }`}
         >
-          <img
-            src={convertFileSrc(`${root}/${m.path}`)}
-            alt={m.name}
-            className="aspect-square w-full rounded-md bg-canvas object-cover"
-          />
+          {m.is_image ? (
+            <img
+              src={convertFileSrc(`${root}/${m.path}`)}
+              alt={m.name}
+              className="aspect-square w-full rounded-md bg-canvas object-cover"
+            />
+          ) : (
+            <span className="flex aspect-square w-full items-center justify-center rounded-md bg-canvas text-ink-dim">
+              <FileText size={28} />
+            </span>
+          )}
           <span className="truncate text-xs text-ink-dim">{m.name}</span>
-        </button>
+          <div className="absolute right-2 top-2 hidden gap-1 group-hover:flex">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                copyPath(m);
+              }}
+              title={copied === m.path ? "Copied!" : `Copy ${m.public_path}`}
+              className="rounded-md bg-canvas/90 p-1.5 text-ink-dim hover:text-ink"
+            >
+              <Copy size={12} />
+            </button>
+            {onDelete && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(m);
+                }}
+                title="Delete"
+                className="rounded-md bg-canvas/90 p-1.5 text-ink-dim hover:text-danger"
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </div>
+        </div>
       ))}
       {items.length === 0 && (
         <p className="col-span-full py-12 text-center text-sm text-ink-dim">
-          No media yet. Use Upload to copy images into the media folder.
+          No media yet. Use Upload to copy files into the media folder.
         </p>
       )}
     </div>
@@ -47,9 +84,10 @@ interface MediaViewProps {
   items: MediaRef[];
   hasMediaInput: boolean;
   onUpload: () => void;
+  onDelete: (m: MediaRef) => void;
 }
 
-export function MediaView({ root, items, hasMediaInput, onUpload }: MediaViewProps) {
+export function MediaView({ root, items, hasMediaInput, onUpload, onDelete }: MediaViewProps) {
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center gap-3 px-6 pt-5 pb-4">
@@ -64,7 +102,7 @@ export function MediaView({ root, items, hasMediaInput, onUpload }: MediaViewPro
         </button>
       </header>
       <div className="flex-1 overflow-y-auto px-6 pb-10">
-        <MediaGrid root={root} items={items} />
+        <MediaGrid root={root} items={items} onDelete={onDelete} />
       </div>
     </div>
   );
@@ -111,5 +149,3 @@ export function MediaPickerDialog({
     </div>
   );
 }
-
-export { IMAGE_FILTERS };

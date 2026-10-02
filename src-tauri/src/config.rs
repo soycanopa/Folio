@@ -3,9 +3,42 @@ use serde_yaml_ng::{Mapping, Value};
 
 use crate::state::AppState;
 
-/// Tipos de campo que v0 sabe editar (TRD.md). El resto se muestra
-/// deshabilitado en la UI y entra en `warnings`.
-pub const FIELD_TYPES_V0: [&str; 5] = ["string", "text", "date", "image", "rich-text"];
+/// Tipos de campo que Folio sabe editar. Portado del set core de su
+/// app (`fields/core`); lo demás se muestra deshabilitado con su nombre.
+pub const FIELD_TYPES: [&str; 10] = [
+    "string", "text", "date", "image", "file", "rich-text", "number",
+    "boolean", "select", "code",
+];
+
+/// Semántica de su `lib/operations.ts`: defaults por tipo de ítem y
+/// override del config con `!== false`.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Operations {
+    pub create: bool,
+    pub rename: bool,
+    pub delete: bool,
+}
+
+fn resolve_operations(kind: &str, m: &Mapping) -> Operations {
+    let (d_create, d_rename, d_delete) = if kind == "file" {
+        (true, false, true)
+    } else {
+        (true, true, true)
+    };
+    let configured = m.get("operations").and_then(Value::as_mapping);
+    let flag = |key: &str, default: bool| -> bool {
+        default
+            && configured
+                .and_then(|c| c.get(key))
+                .and_then(Value::as_bool)
+                != Some(false)
+    };
+    Operations {
+        create: flag("create", d_create),
+        rename: flag("rename", d_rename),
+        delete: flag("delete", d_delete),
+    }
+}
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Media {
@@ -32,6 +65,8 @@ pub struct Field {
     pub field_type: String,
     pub required: bool,
     pub help: Option<String>,
+    /// Options de un select (`options.values`).
+    pub values: Vec<String>,
 }
 
 /// Colecciones (`type: collection`) y archivos únicos (`type: file`),
@@ -48,6 +83,9 @@ pub struct ContentItem {
     pub filename: Option<String>,
     pub fields: Vec<Field>,
     pub view: Option<View>,
+    pub operations: Operations,
+    /// Label del `type: group` que lo contiene, si está agrupado.
+    pub group: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -131,9 +169,9 @@ fn parse_fields(
         };
         let label = get_str(m, "label").unwrap_or_else(|| name.clone());
         let field_type = get_str(m, "type").unwrap_or_else(|| "string".to_string());
-        if !FIELD_TYPES_V0.contains(&field_type.as_str()) {
+        if !FIELD_TYPES.contains(&field_type.as_str()) {
             warnings.push(format!(
-                "content {collection}.{name}: tipo {field_type} no soportado en v0; se muestra deshabilitado"
+                "content {collection}.{name}: tipo {field_type} sin soporte; se muestra deshabilitado"
             ));
         }
         let required = m
@@ -141,12 +179,25 @@ fn parse_fields(
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let help = get_str(m, "help");
+        let values = m
+            .get("options")
+            .and_then(Value::as_mapping)
+            .and_then(|o| o.get("values"))
+            .and_then(Value::as_sequence)
+            .map(|s| {
+                s.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
         out.push(Field {
             name,
             label,
             field_type,
             required,
             help,
+            values,
         });
     }
     out
@@ -165,62 +216,7 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
     let mut content = Vec::new();
     match root_map.get("content") {
         Some(Value::Sequence(items)) => {
-            for item in items {
-                let Some(m) = item.as_mapping() else {
-                    warnings.push("content: ítem sin estructura; ignorado".to_string());
-                    continue;
-                };
-                let Some(name) = get_str(m, "name") else {
-                    warnings.push("content: ítem sin name; ignorado".to_string());
-                    continue;
-                };
-                let kind = match get_str(m, "type").as_deref() {
-                    None | Some("collection") => "collection",
-                    Some("file") => "file",
-                    Some("group") => {
-                        warnings.push(format!(
-                            "content {name}: type group sin soporte aún; ignorado"
-                        ));
-                        continue;
-                    }
-                    Some(other) => {
-                        warnings.push(format!(
-                            "content {name}: type {other} desconocido; ignorado"
-                        ));
-                        continue;
-                    }
-                }
-                .to_string();
-                let Some(path) = get_str(m, "path") else {
-                    warnings.push(format!("content {name}: colección sin path; ignorada"));
-                    continue;
-                };
-                let fields = parse_fields(m.get("fields"), &name, &mut warnings);
-                let label = get_str(m, "label").unwrap_or_else(|| name.clone());
-                let view = m.get("view").and_then(Value::as_mapping).map(|vm| View {
-                    fields: vm
-                        .get("fields")
-                        .and_then(Value::as_sequence)
-                        .map(|s| {
-                            s.iter()
-                                .filter_map(Value::as_str)
-                                .map(str::to_string)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    sort: get_str(vm, "sort"),
-                    order: get_str(vm, "order"),
-                });
-                content.push(ContentItem {
-                    name,
-                    kind,
-                    label,
-                    path,
-                    filename: get_str(m, "filename"),
-                    fields,
-                    view,
-                });
-            }
+            parse_content_items(items, None, &mut content, &mut warnings, 0);
         }
         _ => warnings.push("content ausente o no es una lista; no hay colecciones".to_string()),
     }
@@ -230,6 +226,86 @@ pub fn parse_config(raw: &str) -> Result<PagesConfig, String> {
         content,
         warnings,
     })
+}
+
+/// Resuelve los ítems de `content`. Un `type: group` no es una ruta:
+/// agrupa visualmente los ítems de su `items` (un nivel; anidados se
+/// avisan y se aplanan).
+fn parse_content_items(
+    items: &[Value],
+    group: Option<&str>,
+    out: &mut Vec<ContentItem>,
+    warnings: &mut Vec<String>,
+    depth: usize,
+) {
+    for item in items {
+        let Some(m) = item.as_mapping() else {
+            warnings.push("content: ítem sin estructura; ignorado".to_string());
+            continue;
+        };
+        let Some(name) = get_str(m, "name") else {
+            warnings.push("content: ítem sin name; ignorado".to_string());
+            continue;
+        };
+        let kind = match get_str(m, "type").as_deref() {
+            None | Some("collection") => "collection",
+            Some("file") => "file",
+            Some("group") => {
+                if depth > 0 {
+                    warnings.push(format!(
+                        "content {name}: group anidado; se aplana"
+                    ));
+                }
+                let label = get_str(m, "label").unwrap_or_else(|| name.clone());
+                if let Some(inner) = m.get("items").and_then(Value::as_sequence) {
+                    parse_content_items(inner, Some(&label), out, warnings, depth + 1);
+                } else {
+                    warnings.push(format!(
+                        "content {name}: group sin items; ignorado"
+                    ));
+                }
+                continue;
+            }
+            Some(other) => {
+                warnings.push(format!(
+                    "content {name}: type {other} desconocido; ignorado"
+                ));
+                continue;
+            }
+        }
+        .to_string();
+        let Some(path) = get_str(m, "path") else {
+            warnings.push(format!("content {name}: colección sin path; ignorada"));
+            continue;
+        };
+        let fields = parse_fields(m.get("fields"), &name, warnings);
+        let label = get_str(m, "label").unwrap_or_else(|| name.clone());
+        let view = m.get("view").and_then(Value::as_mapping).map(|vm| View {
+            fields: vm
+                .get("fields")
+                .and_then(Value::as_sequence)
+                .map(|s| {
+                    s.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            sort: get_str(vm, "sort"),
+            order: get_str(vm, "order"),
+        });
+        out.push(ContentItem {
+            name,
+            kind: kind.clone(),
+            label,
+            path,
+            filename: get_str(m, "filename"),
+            fields,
+            view,
+            operations: resolve_operations(&kind, m),
+            group: group.map(str::to_string),
+        });
+    }
 }
 
 #[tauri::command]
@@ -270,25 +346,26 @@ mod tests {
     }
 
     #[test]
-    fn tipo_file_se_parsea_y_group_sigue_ignorado() {
-        let raw = "content:\n  - name: hero\n    label: Hero\n    type: file\n    path: src/content/hero.json\n    fields:\n      - name: heading\n        type: string\n  - name: grupo\n    type: group\n    path: x\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: title\n";
+    fn tipo_file_y_group_se_resuelven() {
+        let raw = "content:\n  - name: hero\n    label: Hero\n    type: file\n    path: src/content/hero.json\n    fields:\n      - name: heading\n        type: string\n  - name: sitio\n    label: Sitio\n    type: group\n    items:\n      - name: blog\n        path: src/content/blog\n        fields:\n          - name: title\n";
         let cfg = parse_config(raw).unwrap();
         assert_eq!(cfg.content.len(), 2);
         assert_eq!(cfg.content[0].kind, "file");
         assert_eq!(cfg.content[0].path, "src/content/hero.json");
+        assert_eq!(cfg.content[1].name, "blog");
+        assert_eq!(cfg.content[1].group.as_deref(), Some("Sitio"));
         assert_eq!(cfg.content[1].kind, "collection");
-        assert!(cfg.warnings.iter().any(|w| w.contains("grupo") && w.contains("group")));
     }
 
     #[test]
     fn campo_de_tipo_desconocido_queda_como_disabled() {
-        let raw = "content:\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: tags\n        type: select\n";
+        let raw = "content:\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: meta\n        type: object\n";
         let cfg = parse_config(raw).unwrap();
-        assert_eq!(cfg.content[0].fields[0].field_type, "select");
+        assert_eq!(cfg.content[0].fields[0].field_type, "object");
         assert!(cfg
             .warnings
             .iter()
-            .any(|w| w.contains("select") && w.contains("deshabilitado")));
+            .any(|w| w.contains("object") && w.contains("deshabilitado")));
     }
 
     #[test]
@@ -296,6 +373,32 @@ mod tests {
         let cfg = parse_config("media:\n  input: m\n").unwrap();
         assert!(cfg.content.is_empty());
         assert!(cfg.warnings.iter().any(|w| w.contains("content ausente")));
+    }
+
+    #[test]
+    fn operations_con_defaults_y_override_como_su_lib() {
+        // Colección: todo true por defecto.
+        let raw = "content:\n  - name: blog\n    path: src/content/blog\n    fields: []\n";
+        let cfg = parse_config(raw).unwrap();
+        assert!(cfg.content[0].operations.create);
+        assert!(cfg.content[0].operations.rename);
+        assert!(cfg.content[0].operations.delete);
+
+        // File: rename false por defecto; override explícito lo apaga.
+        let raw = "content:\n  - name: hero\n    type: file\n    path: src/hero.json\n    operations:\n      delete: false\n    fields: []\n";
+        let cfg = parse_config(raw).unwrap();
+        assert!(!cfg.content[0].operations.rename);
+        assert!(!cfg.content[0].operations.delete);
+        assert!(cfg.content[0].operations.create);
+    }
+
+    #[test]
+    fn campos_del_set_completo_y_select_con_values() {
+        let raw = "content:\n  - name: blog\n    path: src/content/blog\n    fields:\n      - name: n\n        type: number\n      - name: draft\n        type: boolean\n      - name: tags\n        type: select\n        options:\n          values: [a, b]\n      - name: src\n        type: code\n      - name: attachment\n        type: file\n";
+        let cfg = parse_config(raw).unwrap();
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+        let fields = &cfg.content[0].fields;
+        assert_eq!(fields[2].values, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]

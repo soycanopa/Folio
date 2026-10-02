@@ -28,9 +28,9 @@ function Modal({
 }
 
 const inputCls =
-  "w-full rounded-lg bg-canvas px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-accent";
+  "w-full rounded-lg bg-canvas px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring";
 const btnPrimary =
-  "rounded-lg bg-accent px-3.5 py-1.5 text-sm font-medium text-accent-ink disabled:opacity-40";
+  "rounded-lg bg-primary px-3.5 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40";
 const btnGhost =
   "rounded-lg px-3.5 py-1.5 text-sm text-ink-dim hover:text-ink";
 
@@ -70,6 +70,40 @@ export function CommitDialog({
           </button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+export function DiscardDialog({
+  closeLabel,
+  onSave,
+  onDiscard,
+  onCancel,
+}: {
+  closeLabel: string;
+  onSave: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal title="Unsaved changes" onClose={onCancel}>
+      <p className="mb-4 text-sm text-ink-dim">
+        This entry has unsaved changes. Save them before continuing?
+      </p>
+      <div className="flex justify-end gap-2">
+        <button onClick={onCancel} className={btnGhost}>
+          Cancel
+        </button>
+        <button
+          onClick={onDiscard}
+          className="rounded-lg px-3.5 py-1.5 text-sm text-danger hover:opacity-80"
+        >
+          Discard
+        </button>
+        <button onClick={onSave} className={btnPrimary}>
+          {closeLabel}
+        </button>
+      </div>
     </Modal>
   );
 }
