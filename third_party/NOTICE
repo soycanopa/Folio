@@ -61,6 +61,12 @@ usuario):
   loaded it", con "page"→"entry" porque Folio no recarga páginas).
 - **Rename**: su `files/[path]/rename/route.ts` (`githubRenameFile`,
   Git Data en 5 pasos).
+- **Validaciones de esquema** (ambos modos): su `files/[path]/route.ts`
+  valida extensión del ítem (derivada del filename/path como su
+  `lib/config.ts`), `subfolders: false` y `media.extensions` con las
+  categorías de su `lib/utils/file.ts`; el rename de `type: file` se
+  bloquea como su rename route. Exento explícito: `layout.json` del
+  canvas, archivo propio de Folio v2 que la web no contempla.
 - **Mensajes de commit**: su `lib/commit-message.ts` (plantillas,
   tokens, override por `.pages.yml`, recorte a 200), con el sufijo
   "(via Folio)" en vez de "(via Pages CMS)" para atribución
